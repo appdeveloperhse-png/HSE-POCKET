@@ -76,38 +76,66 @@ jobs:
 
           test -f "$HOME/freetype-source/CMakeLists.txt"
 
-      - name: Verify requirements
+          echo "FreeType source prepared:"
+          echo "$HOME/freetype-source"
+
+      - name: Verify Android requirements
         run: |
-          echo "===== buildozer.spec requirements ====="
-          grep "^requirements" buildozer.spec
+          echo "===== buildozer.spec ====="
+          cat buildozer.spec
 
           echo
           echo "===== requirements.txt ====="
           cat requirements.txt
 
           echo
-          echo "===== Checking charset-normalizer ====="
+          echo "===== Checking unwanted packages ====="
 
-          if grep -Eiq 'charset[-_]normalizer' buildozer.spec requirements.txt; then
-            echo "ERROR: charset-normalizer is still present."
+          if grep -Eiq 'openpyxl|charset[-_]normalizer|reportlab|python-docx|docx' buildozer.spec requirements.txt; then
+            echo "ERROR: Android build still contains an unwanted dependency."
+            echo
+            grep -Ein 'openpyxl|charset[-_]normalizer|reportlab|python-docx|docx' \
+              buildozer.spec requirements.txt || true
             exit 1
           fi
 
-          echo "OK: charset-normalizer is NOT present."
+          echo "OK: No openpyxl."
+          echo "OK: No charset-normalizer."
+          echo "OK: No ReportLab."
+          echo "OK: No python-docx."
+
+      - name: Check main.py imports
+        run: |
+          echo "===== Checking main.py ====="
+
+          if grep -Eiq 'import openpyxl|from openpyxl|import reportlab|from reportlab|import docx|from docx' main.py; then
+            echo "ERROR: main.py still contains an Android-incompatible dependency."
+            grep -Ein 'openpyxl|reportlab|docx' main.py || true
+            exit 1
+          fi
+
+          echo "OK: main.py contains no openpyxl/reportlab/python-docx imports."
+
+      - name: Check Python syntax
+        run: |
+          python -m py_compile main.py
+
+          echo "Python syntax check passed."
 
       - name: Clean previous build
         run: |
           rm -rf .buildozer
           rm -rf bin
-
           mkdir -p bin
 
       - name: Build APK
         run: |
           export P4A_freetype_DIR="$HOME/freetype-source"
 
+          echo "======================================"
           echo "FreeType source:"
           echo "$P4A_freetype_DIR"
+          echo "======================================"
 
           test -d "$P4A_freetype_DIR"
 
@@ -116,7 +144,10 @@ jobs:
       - name: Show APK
         if: always()
         run: |
-          echo "===== APK FILES ====="
+          echo "======================================"
+          echo "APK FILES"
+          echo "======================================"
+
           find . -type f -name "*.apk" -print || true
 
       - name: Upload APK
