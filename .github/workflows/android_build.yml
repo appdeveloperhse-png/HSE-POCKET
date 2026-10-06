@@ -8,41 +8,25 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-22.04
 
     steps:
 
-      # ---------------------------------------------------------
-      # 1. Checkout
-      # ---------------------------------------------------------
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-
-      # ---------------------------------------------------------
-      # 2. Python 3.11
-      # ---------------------------------------------------------
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-
-      # ---------------------------------------------------------
-      # 3. Java 17
-      # ---------------------------------------------------------
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-
-      # ---------------------------------------------------------
-      # 4. Install Linux dependencies
-      # ---------------------------------------------------------
-      - name: Install system dependencies
+      - name: Install system packages
         run: |
           sudo apt-get update
 
@@ -50,31 +34,29 @@ jobs:
             git \
             zip \
             unzip \
+            ant \
             autoconf \
             automake \
-            libtool \
-            pkg-config \
-            zlib1g-dev \
-            libncurses5-dev \
-            libncursesw5-dev \
-            libffi-dev \
-            libssl-dev \
-            libsqlite3-dev \
-            libbz2-dev \
-            liblzma-dev \
-            libreadline-dev \
-            libjpeg-dev \
-            libpng-dev \
-            libfreetype6-dev \
+            autopoint \
+            build-essential \
             cmake \
             gettext \
-            autopoint
+            libffi-dev \
+            libjpeg-dev \
+            libpng-dev \
+            libssl-dev \
+            libtool \
+            liblzma-dev \
+            libbz2-dev \
+            libreadline-dev \
+            libsqlite3-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libfreetype6-dev \
+            pkg-config \
+            zlib1g-dev
 
-
-      # ---------------------------------------------------------
-      # 5. Upgrade Python build tools
-      # ---------------------------------------------------------
-      - name: Install Python build tools
+      - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
@@ -82,166 +64,65 @@ jobs:
             buildozer==1.6.0 \
             "Cython==0.29.34"
 
-
-      # ---------------------------------------------------------
-      # 6. Prepare FreeType from GitHub
-      # ---------------------------------------------------------
       - name: Prepare FreeType
         run: |
-          FREETYPE_DIR="$HOME/freetype-source"
-
-          rm -rf "$FREETYPE_DIR"
+          rm -rf "$HOME/freetype-source"
 
           git clone \
             --depth 1 \
             --branch VER-2-14-1 \
             https://github.com/freetype/freetype.git \
-            "$FREETYPE_DIR"
+            "$HOME/freetype-source"
 
-          echo "FreeType source:"
-          echo "$FREETYPE_DIR"
+          test -f "$HOME/freetype-source/CMakeLists.txt"
 
-          test -f "$FREETYPE_DIR/CMakeLists.txt"
-
-
-      # ---------------------------------------------------------
-      # 7. Fix Android requirements
-      #
-      # IMPORTANT:
-      # charset-normalizer 3.x causes the
-      # cp314-android wheel error.
-      #
-      # We force the known working 2.1.1 version.
-      # ---------------------------------------------------------
-      - name: Fix Android Python requirements
+      - name: Verify requirements
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("buildozer.spec")
-          text = path.read_text()
-
-          # Remove any existing charset-normalizer entry
-          text = text.replace(",charset-normalizer", "")
-          text = text.replace("charset-normalizer,", "")
-
-          # Add a pinned pure-Python version
-          old = "requirements = python3,kivy,openpyxl"
-
-          new = (
-              "requirements = "
-              "python3,kivy,openpyxl,charset-normalizer==2.1.1"
-          )
-
-          if old in text:
-              text = text.replace(old, new)
-          else:
-              lines = text.splitlines()
-
-              for i, line in enumerate(lines):
-                  if line.strip().startswith("requirements ="):
-                      lines[i] = new
-                      break
-              else:
-                  raise SystemExit(
-                      "Could not find requirements line in buildozer.spec"
-                  )
-
-              text = "\n".join(lines) + "\n"
-
-          # Force stable python-for-android branch
-          if "p4a.branch" not in text:
-              text += "\np4a.branch = master\n"
-
-          path.write_text(text)
-
-          print("Updated buildozer.spec:")
-          print()
-          print(path.read_text())
-          PY
-
-
-      # ---------------------------------------------------------
-      # 8. Show versions
-      # ---------------------------------------------------------
-      - name: Show build versions
-        run: |
-          echo "Python:"
-          python --version
-
-          echo
-          echo "Pip:"
-          pip --version
-
-          echo
-          echo "Buildozer:"
-          buildozer --version
-
-          echo
-          echo "Java:"
-          java -version
-
-          echo
-          echo "Buildozer requirements:"
+          echo "===== buildozer.spec requirements ====="
           grep "^requirements" buildozer.spec
 
           echo
-          echo "p4a branch:"
-          grep "^p4a.branch" buildozer.spec || true
+          echo "===== requirements.txt ====="
+          cat requirements.txt
 
+          echo
+          echo "===== Checking charset-normalizer ====="
 
-      # ---------------------------------------------------------
-      # 9. Clean previous Android build
-      # ---------------------------------------------------------
-      - name: Clean Buildozer
+          if grep -Eiq 'charset[-_]normalizer' buildozer.spec requirements.txt; then
+            echo "ERROR: charset-normalizer is still present."
+            exit 1
+          fi
+
+          echo "OK: charset-normalizer is NOT present."
+
+      - name: Clean previous build
         run: |
           rm -rf .buildozer
           rm -rf bin
 
           mkdir -p bin
 
-
-      # ---------------------------------------------------------
-      # 10. Build APK
-      # ---------------------------------------------------------
       - name: Build APK
-        env:
-          P4A_freetype_DIR: /home/runner/freetype-source
         run: |
-
           export P4A_freetype_DIR="$HOME/freetype-source"
 
-          echo "----------------------------------------"
-          echo "FreeType:"
+          echo "FreeType source:"
           echo "$P4A_freetype_DIR"
-          echo "----------------------------------------"
 
           test -d "$P4A_freetype_DIR"
 
           buildozer -v android debug
 
-
-      # ---------------------------------------------------------
-      # 11. Find APK
-      # ---------------------------------------------------------
-      - name: Find APK
+      - name: Show APK
         if: always()
         run: |
-          echo "----------------------------------------"
-          echo "APK FILES"
-          echo "----------------------------------------"
-
+          echo "===== APK FILES ====="
           find . -type f -name "*.apk" -print || true
 
-
-      # ---------------------------------------------------------
-      # 12. Upload APK
-      # ---------------------------------------------------------
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: HSE-Management-APK
-          path: |
-            bin/*.apk
+          path: bin/*.apk
           if-no-files-found: error
