@@ -60,28 +60,6 @@ jobs:
             gettext \
             autopoint
 
-      - name: Test network
-        run: |
-          echo "======================================"
-          echo "NETWORK TEST"
-          echo "======================================"
-
-          curl -4 -L \
-            --connect-timeout 30 \
-            --max-time 120 \
-            --retry 5 \
-            --retry-delay 5 \
-            -I https://github.com
-
-          curl -4 -L \
-            --connect-timeout 30 \
-            --max-time 120 \
-            --retry 5 \
-            --retry-delay 5 \
-            -I https://pypi.org
-
-          echo "Network test completed."
-
       - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
@@ -90,19 +68,57 @@ jobs:
 
       - name: Show versions
         run: |
-          echo "Python:"
           python --version
-
-          echo "Buildozer:"
           buildozer --version
-
-          echo "Java:"
           java -version
 
-      - name: Clean previous build
+      - name: Clean old Buildozer files
         run: |
           rm -rf .buildozer
           rm -rf bin
+
+      - name: Prepare FreeType download
+        run: |
+          set -e
+
+          FREETYPE_VERSION="2.14.1"
+          FREETYPE_FILE="freetype-${FREETYPE_VERSION}.tar.gz"
+
+          mkdir -p "$HOME/.buildozer/android/packages/freetype"
+
+          echo "=========================================="
+          echo "Downloading FreeType"
+          echo "File: $FREETYPE_FILE"
+          echo "=========================================="
+
+          curl -4 -L \
+            --fail \
+            --show-error \
+            --location \
+            --connect-timeout 30 \
+            --max-time 300 \
+            --retry 10 \
+            --retry-delay 5 \
+            --retry-all-errors \
+            "https://download.savannah.gnu.org/releases/freetype/$FREETYPE_FILE" \
+            -o "$HOME/.buildozer/android/packages/freetype/$FREETYPE_FILE"
+
+          echo "=========================================="
+          echo "Checking FreeType archive"
+          echo "=========================================="
+
+          ls -lh "$HOME/.buildozer/android/packages/freetype/$FREETYPE_FILE"
+
+          file "$HOME/.buildozer/android/packages/freetype/$FREETYPE_FILE"
+
+          tar -tzf \
+            "$HOME/.buildozer/android/packages/freetype/$FREETYPE_FILE" \
+            >/dev/null
+
+          touch \
+            "$HOME/.buildozer/android/packages/freetype/.mark-$FREETYPE_FILE"
+
+          echo "FreeType prepared successfully."
 
       - name: Build APK
         run: |
@@ -111,15 +127,15 @@ jobs:
       - name: Search APK
         if: always()
         run: |
-          echo "======================================"
-          echo "APK FILES"
-          echo "======================================"
+          echo "=========================================="
+          echo "APK SEARCH"
+          echo "=========================================="
 
           find . -type f -name "*.apk" -print
 
-          echo "======================================"
-          echo "BIN"
-          echo "======================================"
+          echo "=========================================="
+          echo "BIN DIRECTORY"
+          echo "=========================================="
 
           ls -lah bin 2>/dev/null || true
 
