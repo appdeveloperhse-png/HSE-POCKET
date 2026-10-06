@@ -5,23 +5,28 @@ package.name = hsemanagement
 package.domain = org.hse
 
 source.dir = .
-source.include_exts = py,png,jpg,jpeg,kv,atlas,ttf,otf
+
+source.include_exts = py,png,jpg,jpeg,kv,atlas,ttf,otf,txt,rtf,pdf,xlsx,csv
 
 version = 1.0.0
 
 orientation = portrait
 fullscreen = 0
 
-requirements = python3,kivy,openpyxl,reportlab,python-docx
+requirements = python3,kivy,openpyxl
 
 android.api = 35
 android.minapi = 24
 android.ndk = 28c
+
 android.archs = arm64-v8a
 
 android.accept_sdk_license = True
+
 android.permissions = android.permission.INTERNET
+
 android.private_storage = True
+
 android.logcat_filters = *:S python:D
 
 [buildozer]
