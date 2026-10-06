@@ -1,102 +1,97 @@
-name: Build HSE Management System APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-
-permissions:
-  contents: read
 
 jobs:
+
   build:
-    name: Build Android APK
+
     runs-on: ubuntu-22.04
 
-    env:
-      PYTHONUNBUFFERED: "1"
-      PYTHONFORANDROID_PREREQUISITES_INSTALL_INTERACTIVE: "0"
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-
     steps:
+
+      # ======================================================
+      # CHECKOUT
+      # ======================================================
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+      # ======================================================
+      # SYSTEM DEPENDENCIES
+      # ======================================================
 
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-
-      - name: Install Linux dependencies
+      - name: Install system dependencies
         run: |
+
           sudo apt-get update
 
           sudo apt-get install -y \
+            python3 \
+            python3-pip \
+            python3-venv \
             git \
-            curl \
-            wget \
             zip \
             unzip \
+            openjdk-17-jdk \
             autoconf \
             automake \
             libtool \
             pkg-config \
-            cmake \
             zlib1g-dev \
             libncurses5-dev \
             libncursesw5-dev \
-            libtinfo6 \
             libffi-dev \
             libssl-dev \
-            libltdl-dev \
+            libsqlite3-dev \
+            libbz2-dev \
+            liblzma-dev \
+            libreadline-dev \
+            libjpeg-dev \
+            libpng-dev \
+            libfreetype6-dev \
+            cmake \
             gettext \
             autopoint
 
 
-      - name: Install Buildozer
+      # ======================================================
+      # PYTHON
+      # ======================================================
+
+      - name: Configure Python
         run: |
-          python -m pip install --upgrade pip setuptools wheel
-          pip install buildozer
-          pip install "Cython==0.29.34"
+
+          python3 --version
+
+          python3 -m pip install --upgrade pip setuptools wheel
 
 
-      - name: Show versions
+      # ======================================================
+      # BUILDOTOOLS
+      # ======================================================
+
+      - name: Install Buildozer and Cython
         run: |
-          python --version
-          buildozer --version
-          java -version
+
+          python3 -m pip install \
+            buildozer==1.6.0 \
+            "Cython==0.29.34"
 
 
-      - name: Clean old Buildozer files
+      # ======================================================
+      # FREE TYPE SOURCE
+      #
+      # Savannah download is unavailable in the runner.
+      # Use GitHub source instead.
+      # ======================================================
+
+      - name: Prepare FreeType source
         run: |
-          rm -rf .buildozer
-          rm -rf bin
-
-
-      # ==========================================================
-      # DOWNLOAD FREETYPE FROM GITHUB
-      # NO SAVANNAH DOWNLOAD
-      # ==========================================================
-      - name: Prepare FreeType
-        run: |
-          set -e
 
           FREETYPE_DIR="$HOME/freetype-source"
-
-          echo "=========================================="
-          echo "Preparing FreeType 2.14.1"
-          echo "=========================================="
 
           rm -rf "$FREETYPE_DIR"
 
@@ -106,79 +101,71 @@ jobs:
             https://github.com/freetype/freetype.git \
             "$FREETYPE_DIR"
 
-          echo "=========================================="
-          echo "Checking FreeType"
-          echo "=========================================="
-
-          test -d "$FREETYPE_DIR"
-          test -d "$FREETYPE_DIR/src"
-          test -d "$FREETYPE_DIR/include"
-          test -f "$FREETYPE_DIR/CMakeLists.txt"
-
-          echo "FreeType location:"
+          echo "FreeType source prepared:"
           echo "$FREETYPE_DIR"
 
-          echo "FreeType files:"
-          ls -lah "$FREETYPE_DIR"
-
-          echo "=========================================="
-          echo "FreeType READY"
-          echo "=========================================="
+          test -f "$FREETYPE_DIR/CMakeLists.txt"
 
 
-      # ==========================================================
+      # ======================================================
+      # CLEAN PREVIOUS BUILD
+      # ======================================================
+
+      - name: Clean Buildozer
+        run: |
+
+          rm -rf .buildozer
+          rm -rf bin
+
+          mkdir -p bin
+
+
+      # ======================================================
       # BUILD APK
-      #
-      # IMPORTANT:
-      # Set P4A_freetype_DIR INSIDE the shell.
-      #
-      # Do NOT use:
-      # ${{ env.HOME }}
-      # ==========================================================
+      # ======================================================
+
       - name: Build APK
         run: |
-          set -e
 
           export P4A_freetype_DIR="$HOME/freetype-source"
 
-          echo "=========================================="
           echo "P4A FREETYPE SOURCE"
-          echo "=========================================="
-
-          echo "HOME = $HOME"
-          echo "P4A_freetype_DIR = $P4A_freetype_DIR"
+          echo "$P4A_freetype_DIR"
 
           test -d "$P4A_freetype_DIR"
-          test -d "$P4A_freetype_DIR/src"
-          test -d "$P4A_freetype_DIR/include"
-
-          echo "=========================================="
-          echo "Starting Buildozer"
-          echo "=========================================="
 
           buildozer -v android debug
 
 
-      - name: Search APK
+      # ======================================================
+      # SHOW APK
+      # ======================================================
+
+      - name: List APK files
         if: always()
         run: |
-          echo "=========================================="
-          echo "APK SEARCH"
-          echo "=========================================="
 
-          find . -type f -name "*.apk" -print
+          echo "APK files:"
 
-          echo "=========================================="
-          echo "BIN DIRECTORY"
-          echo "=========================================="
+          find bin \
+            -type f \
+            -name "*.apk" \
+            -print || true
 
-          ls -lah bin 2>/dev/null || true
 
+      # ======================================================
+      # UPLOAD APK
+      # ======================================================
 
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
+
         with:
-          name: HSE-Management-System-APK
-          path: bin/*.apk
+
+          name: HSE-Management-APK
+
+          path: |
+            bin/*.apk
+
           if-no-files-found: error
