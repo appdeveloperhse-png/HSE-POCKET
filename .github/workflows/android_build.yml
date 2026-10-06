@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - master
 
 permissions:
   contents: read
@@ -15,33 +14,42 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-22.04
 
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONFORANDROID_PREREQUISITES_INSTALL_INTERACTIVE: "0"
+
+      # Force Python networking to IPv4
+      PYTHONPATH: ${{ github.workspace }}/ci
+
     steps:
-      - name: Checkout
+
+      # ---------------------------------------------------------
+      # 1. Checkout
+      # ---------------------------------------------------------
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      # ---------------------------------------------------------
+      # 2. Python
+      # ---------------------------------------------------------
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Setup Java
+      # ---------------------------------------------------------
+      # 3. Java
+      # ---------------------------------------------------------
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Check Internet Connectivity
-        run: |
-          echo "Checking GitHub..."
-          curl -I --retry 3 --connect-timeout 20 https://github.com
-
-          echo "Checking PyPI..."
-          curl -I --retry 3 --connect-timeout 20 https://pypi.org
-
-          echo "Checking Google..."
-          curl -I --retry 3 --connect-timeout 20 https://dl.google.com
-
-      - name: Install Linux Dependencies
+      # ---------------------------------------------------------
+      # 4. Install Linux dependencies
+      # ---------------------------------------------------------
+      - name: Install Linux dependencies
         run: |
           sudo apt-get update
 
@@ -62,36 +70,84 @@ jobs:
             libssl-dev \
             libltdl-dev \
             gettext \
-            autopoint
+            autopoint \
+            curl
 
+      # ---------------------------------------------------------
+      # 5. Check network using IPv4
+      # ---------------------------------------------------------
+      - name: Test IPv4 network
+        run: |
+          echo "Testing GitHub IPv4..."
+          curl -4 -I --connect-timeout 20 --retry 3 https://github.com
+
+          echo "Testing PyPI IPv4..."
+          curl -4 -I --connect-timeout 20 --retry 3 https://pypi.org
+
+          echo "Testing Google download server IPv4..."
+          curl -4 -I --connect-timeout 20 --retry 3 https://dl.google.com
+
+      # ---------------------------------------------------------
+      # 6. Install Buildozer
+      # ---------------------------------------------------------
       - name: Install Buildozer
         run: |
-          python -m pip install --upgrade pip setuptools
-          pip install buildozer
-          pip install cython==0.29.34
+          python -m pip install --upgrade pip setuptools wheel
 
-      - name: Show Build Environment
+          pip install --upgrade buildozer
+
+          pip install "Cython==0.29.34"
+
+      # ---------------------------------------------------------
+      # 7. Show versions
+      # ---------------------------------------------------------
+      - name: Show build versions
         run: |
+          echo "Python:"
           python --version
-          buildozer --version
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_NDK=$ANDROID_NDK"
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-          echo "ANDROIDAPI=$ANDROIDAPI"
-          echo "ANDROIDMINAPI=$ANDROIDMINAPI"
 
+          echo "Buildozer:"
+          buildozer --version
+
+          echo "Java:"
+          java -version
+
+      # ---------------------------------------------------------
+      # 8. Clean old Buildozer data
+      # ---------------------------------------------------------
+      - name: Clean Buildozer cache
+        run: |
+          rm -rf .buildozer
+          rm -rf bin
+
+      # ---------------------------------------------------------
+      # 9. Build APK
+      # ---------------------------------------------------------
       - name: Build APK
-        env:
-          PYTHONFORANDROID_PREREQUISITES_INSTALL_INTERACTIVE: "0"
         run: |
           buildozer -v android debug
 
+      # ---------------------------------------------------------
+      # 10. Find APK
+      # ---------------------------------------------------------
       - name: Find APK
         if: always()
         run: |
-          echo "Searching for APK..."
+          echo "===================================="
+          echo "APK SEARCH"
+          echo "===================================="
+
           find . -type f -name "*.apk" -print
 
+          echo "===================================="
+          echo "BIN DIRECTORY"
+          echo "===================================="
+
+          ls -lah bin 2>/dev/null || true
+
+      # ---------------------------------------------------------
+      # 11. Upload APK
+      # ---------------------------------------------------------
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
