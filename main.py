@@ -19,28 +19,47 @@ from kivy.uix.tabbedpanel import TabbedPanelHeader
 from kivy.uix.textinput import TextInput
 
 import openpyxl
-from docx import Document
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
 
 
 # ============================================================
 # APPLICATION PATHS
 # ============================================================
 
-APP_DIR = os.path.join(
-    App.get_running_app().user_data_dir
-    if App.get_running_app()
-    else os.path.expanduser("~"),
-    "HSE_Management"
+def get_app_directory():
+
+    app = App.get_running_app()
+
+    if app:
+        base = app.user_data_dir
+    else:
+        base = os.path.expanduser("~")
+
+    folder = os.path.join(
+        base,
+        "HSE_Management"
+    )
+
+    os.makedirs(folder, exist_ok=True)
+
+    return folder
+
+
+APP_DIR = get_app_directory()
+
+DB_NAME = os.path.join(
+    APP_DIR,
+    "hse_management.db"
 )
 
-os.makedirs(APP_DIR, exist_ok=True)
+EXPORT_DIR = os.path.join(
+    APP_DIR,
+    "exports"
+)
 
-DB_NAME = os.path.join(APP_DIR, "hse_management.db")
-EXPORT_DIR = os.path.join(APP_DIR, "exports")
-
-os.makedirs(EXPORT_DIR, exist_ok=True)
+os.makedirs(
+    EXPORT_DIR,
+    exist_ok=True
+)
 
 
 # ============================================================
@@ -48,12 +67,14 @@ os.makedirs(EXPORT_DIR, exist_ok=True)
 # ============================================================
 
 def get_connection():
+
     return sqlite3.connect(DB_NAME)
 
 
 def init_db():
 
     conn = get_connection()
+
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -108,6 +129,7 @@ def init_db():
     """)
 
     conn.commit()
+
     conn.close()
 
 
@@ -116,25 +138,111 @@ def init_db():
 # ============================================================
 
 def timestamp():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    return datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
 
 def document_number(prefix):
-    return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    return "{}-{}".format(
+        prefix,
+        datetime.now().strftime(
+            "%Y%m%d%H%M%S"
+        )
+    )
 
 
 def safe_filename(value):
+
     characters = '<>:"/\\|?*'
+
     for char in characters:
-        value = value.replace(char, "_")
+        value = value.replace(
+            char,
+            "_"
+        )
+
     return value
 
 
+def clean_pdf_text(text):
+
+    if text is None:
+        return ""
+
+    text = str(text)
+
+    replacements = {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2026": "...",
+        "\u00a0": " ",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    result = ""
+
+    for char in text:
+
+        if ord(char) < 128:
+            result += char
+        else:
+            result += "?"
+
+    return result
+
+
 # ============================================================
-# WORD EXPORT
+# RTF / WORD-COMPATIBLE EXPORT
 # ============================================================
 
-def export_stop_card_docx(
+def rtf_escape(text):
+
+    if text is None:
+        return ""
+
+    text = str(text)
+
+    result = ""
+
+    for char in text:
+
+        code = ord(char)
+
+        if char == "\\":
+            result += r"\\"
+
+        elif char == "{":
+            result += r"\{"
+
+        elif char == "}":
+            result += r"\}"
+
+        elif char == "\n":
+            result += r"\line "
+
+        elif code < 128:
+            result += char
+
+        else:
+
+            if code > 32767:
+                code -= 65536
+
+            result += r"\u{}?".format(code)
+
+    return result
+
+
+def export_stop_card_rtf(
     doc_no,
     category,
     obs_type,
@@ -144,60 +252,430 @@ def export_stop_card_docx(
 ):
 
     filename = safe_filename(
-        f"STOP_Card_{doc_no}.docx"
+        "STOP_Card_{}.rtf".format(
+            doc_no
+        )
     )
 
-    path = os.path.join(EXPORT_DIR, filename)
-
-    doc = Document()
-
-    doc.add_heading(
-        "HSE OBSERVATION & STOP CARD",
-        level=1
+    path = os.path.join(
+        EXPORT_DIR,
+        filename
     )
 
-    doc.add_paragraph(
-        f"Document No: {doc_no}"
+    content = []
+
+    content.append(
+        r"{\rtf1\ansi\deff0"
     )
 
-    doc.add_paragraph(
-        f"Category: {category}"
+    content.append(
+        r"{\fonttbl{\f0 Arial;}}"
     )
 
-    doc.add_paragraph(
-        f"Observation Type: {obs_type}"
+    content.append(
+        r"\fs32\b HSE OBSERVATION & STOP CARD\b0\fs20\par"
     )
 
-    doc.add_paragraph(
-        f"Priority: {priority}"
+    content.append(
+        r"\par"
     )
 
-    doc.add_heading(
-        "Observation",
-        level=2
+    content.append(
+        r"\b Document No:\b0 "
+        + rtf_escape(doc_no)
+        + r"\par"
     )
 
-    doc.add_paragraph(description)
-
-    doc.add_heading(
-        "Corrective Action",
-        level=2
+    content.append(
+        r"\b Category:\b0 "
+        + rtf_escape(category)
+        + r"\par"
     )
 
-    doc.add_paragraph(action)
-
-    doc.add_paragraph(
-        f"Generated: {timestamp()}"
+    content.append(
+        r"\b Observation Type:\b0 "
+        + rtf_escape(obs_type)
+        + r"\par"
     )
 
-    doc.save(path)
+    content.append(
+        r"\b Priority:\b0 "
+        + rtf_escape(priority)
+        + r"\par"
+    )
+
+    content.append(
+        r"\par\b Observation\b0\par"
+    )
+
+    content.append(
+        rtf_escape(description)
+        + r"\par"
+    )
+
+    content.append(
+        r"\par\b Corrective Action\b0\par"
+    )
+
+    content.append(
+        rtf_escape(action)
+        + r"\par"
+    )
+
+    content.append(
+        r"\par"
+        r"\b Generated:\b0 "
+        + rtf_escape(timestamp())
+        + r"\par"
+    )
+
+    content.append("}")
+
+    with open(
+        path,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        file.write(
+            "\n".join(content)
+        )
 
     return path
 
 
 # ============================================================
-# PDF EXPORT
+# PURE PYTHON PDF EXPORT
 # ============================================================
+
+def pdf_escape(text):
+
+    text = clean_pdf_text(text)
+
+    text = text.replace(
+        "\\",
+        "\\\\"
+    )
+
+    text = text.replace(
+        "(",
+        "\\("
+    )
+
+    text = text.replace(
+        ")",
+        "\\)"
+    )
+
+    return text
+
+
+def wrap_text(text, max_chars=95):
+
+    text = clean_pdf_text(text)
+
+    if not text:
+        return [""]
+
+    result = []
+
+    paragraphs = text.split(
+        "\n"
+    )
+
+    for paragraph in paragraphs:
+
+        words = paragraph.split()
+
+        if not words:
+            result.append("")
+            continue
+
+        current = ""
+
+        for word in words:
+
+            if not current:
+
+                current = word
+
+            elif len(current) + 1 + len(word) <= max_chars:
+
+                current += " " + word
+
+            else:
+
+                result.append(current)
+
+                current = word
+
+        if current:
+            result.append(current)
+
+    return result
+
+
+def create_pdf_file(
+    path,
+    title,
+    lines
+):
+
+    page_width = 595
+    page_height = 842
+
+    left = 40
+    top = 800
+    line_height = 16
+
+    max_lines = 45
+
+    pages = []
+
+    current_page = []
+
+    for line in lines:
+
+        wrapped = wrap_text(
+            line
+        )
+
+        for wrapped_line in wrapped:
+
+            if len(current_page) >= max_lines:
+
+                pages.append(
+                    current_page
+                )
+
+                current_page = []
+
+            current_page.append(
+                wrapped_line
+            )
+
+    if current_page:
+
+        pages.append(
+            current_page
+        )
+
+    if not pages:
+
+        pages = [[""]]
+
+    objects = []
+
+    # Catalog
+    objects.append(
+        b"<< /Type /Catalog /Pages 2 0 R >>"
+    )
+
+    # Pages object
+    page_numbers = []
+
+    for index in range(
+        len(pages)
+    ):
+        page_numbers.append(
+            4 + index * 2
+        )
+
+    kids = " ".join(
+        "{} 0 R".format(number)
+        for number in page_numbers
+    )
+
+    objects.append(
+        "<< /Type /Pages /Kids [{}] /Count {} >>".format(
+            kids,
+            len(pages)
+        ).encode("latin-1")
+    )
+
+    font_object_number = 3
+
+    objects.append(
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+    )
+
+    for index, page_lines in enumerate(pages):
+
+        page_object_number = 4 + index * 2
+
+        content_object_number = 5 + index * 2
+
+        commands = []
+
+        commands.append(
+            "BT"
+        )
+
+        commands.append(
+            "/F1 16 Tf"
+        )
+
+        commands.append(
+            "{} {} Td".format(
+                left,
+                top
+            )
+        )
+
+        commands.append(
+            "({}) Tj".format(
+                pdf_escape(title)
+            )
+        )
+
+        commands.append(
+            "0 -28 Td"
+        )
+
+        commands.append(
+            "/F1 10 Tf"
+        )
+
+        for line in page_lines:
+
+            commands.append(
+                "({}) Tj".format(
+                    pdf_escape(line)
+                )
+            )
+
+            commands.append(
+                "0 -{} Td".format(
+                    line_height
+                )
+            )
+
+        commands.append(
+            "ET"
+        )
+
+        stream = "\n".join(
+            commands
+        ).encode(
+            "latin-1",
+            errors="replace"
+        )
+
+        page_object = (
+            "<< /Type /Page "
+            "/Parent 2 0 R "
+            "/MediaBox [0 0 595 842] "
+            "/Resources << /Font << /F1 3 0 R >> >> "
+            "/Contents {} 0 R >>"
+        ).format(
+            content_object_number
+        ).encode(
+            "latin-1"
+        )
+
+        content_object = (
+            "<< /Length {} >>\n"
+            "stream\n"
+        ).format(
+            len(stream)
+        ).encode(
+            "latin-1"
+        ) + stream + b"\nendstream"
+
+        objects.append(
+            page_object
+        )
+
+        objects.append(
+            content_object
+        )
+
+    pdf = bytearray()
+
+    pdf.extend(
+        b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+    )
+
+    offsets = [0]
+
+    for number, obj in enumerate(
+        objects,
+        start=1
+    ):
+
+        offsets.append(
+            len(pdf)
+        )
+
+        pdf.extend(
+            "{} 0 obj\n".format(
+                number
+            ).encode(
+                "latin-1"
+            )
+        )
+
+        pdf.extend(obj)
+
+        pdf.extend(
+            b"\nendobj\n"
+        )
+
+    xref_position = len(pdf)
+
+    pdf.extend(
+        "xref\n0 {}\n".format(
+            len(objects) + 1
+        ).encode(
+            "latin-1"
+        )
+    )
+
+    pdf.extend(
+        b"0000000000 65535 f \n"
+    )
+
+    for offset in offsets[1:]:
+
+        pdf.extend(
+            "{:010d} 00000 n \n".format(
+                offset
+            ).encode(
+                "latin-1"
+            )
+        )
+
+    pdf.extend(
+        "trailer\n<< /Size {} /Root 1 0 R >>\n".format(
+            len(objects) + 1
+        ).encode(
+            "latin-1"
+        )
+    )
+
+    pdf.extend(
+        b"startxref\n"
+    )
+
+    pdf.extend(
+        "{}\n".format(
+            xref_position
+        ).encode(
+            "latin-1"
+        )
+    )
+
+    pdf.extend(
+        b"%%EOF"
+    )
+
+    with open(
+        path,
+        "wb"
+    ) as file:
+
+        file.write(pdf)
+
 
 def export_stop_card_pdf(
     doc_no,
@@ -209,71 +687,46 @@ def export_stop_card_pdf(
 ):
 
     filename = safe_filename(
-        f"STOP_Card_{doc_no}.pdf"
+        "STOP_Card_{}.pdf".format(
+            doc_no
+        )
     )
 
-    path = os.path.join(EXPORT_DIR, filename)
-
-    pdf = canvas.Canvas(path, pagesize=A4)
-
-    width, height = A4
-
-    y = height - 50
-
-    pdf.setFont("Helvetica-Bold", 16)
-
-    pdf.drawString(
-        40,
-        y,
-        "HSE OBSERVATION & STOP CARD"
+    path = os.path.join(
+        EXPORT_DIR,
+        filename
     )
 
-    y -= 40
-
-    pdf.setFont("Helvetica", 10)
-
-    data = [
-        f"Document No: {doc_no}",
-        f"Category: {category}",
-        f"Observation Type: {obs_type}",
-        f"Priority: {priority}",
+    lines = [
+        "Document No: {}".format(
+            doc_no
+        ),
+        "Category: {}".format(
+            category
+        ),
+        "Observation Type: {}".format(
+            obs_type
+        ),
+        "Priority: {}".format(
+            priority
+        ),
         "",
-        "Observation:",
+        "OBSERVATION",
         description,
         "",
-        "Corrective Action:",
+        "CORRECTIVE ACTION",
         action,
         "",
-        f"Generated: {timestamp()}"
+        "Generated: {}".format(
+            timestamp()
+        )
     ]
 
-    for line in data:
-
-        if y < 50:
-            pdf.showPage()
-            y = height - 50
-
-        if line == "":
-            y -= 12
-            continue
-
-        lines = line.split("\n")
-
-        for text_line in lines:
-
-            if y < 50:
-                pdf.showPage()
-                y = height - 50
-
-            pdf.drawString(
-                40,
-                y,
-                text_line[:110]
-            )
-
-            y -= 16
-
-    pdf.save()
+    create_pdf_file(
+        path,
+        "HSE OBSERVATION & STOP CARD",
+        lines
+    )
 
     return path
 
@@ -329,11 +782,33 @@ def export_capa_excel():
     ])
 
     for row in rows:
-        sheet.append(list(row))
+
+        sheet.append(
+            list(row)
+        )
 
     sheet.freeze_panes = "A2"
 
-    workbook.save(path)
+    # Basic column widths
+    widths = {
+        "A": 10,
+        "B": 22,
+        "C": 45,
+        "D": 25,
+        "E": 18,
+        "F": 15,
+        "G": 22
+    }
+
+    for column, width in widths.items():
+
+        sheet.column_dimensions[
+            column
+        ].width = width
+
+    workbook.save(
+        path
+    )
 
     return path
 
@@ -364,7 +839,9 @@ class HSEApp(App):
             bold=True
         )
 
-        main_layout.add_widget(header)
+        main_layout.add_widget(
+            header
+        )
 
         self.tabs = TabbedPanel(
             do_default_tab=False,
@@ -480,7 +957,9 @@ class HSEApp(App):
             self.refresh_dashboard()
         )
 
-        layout.add_widget(refresh)
+        layout.add_widget(
+            refresh
+        )
 
         self.refresh_dashboard()
 
@@ -522,10 +1001,15 @@ class HSEApp(App):
         conn.close()
 
         self.dashboard_label.text = (
-            f"Observations / STOP Cards: {observations}\n\n"
-            f"Incidents: {incidents}\n\n"
-            f"Audit Findings: {audits}\n\n"
-            f"Open CAPA: {open_capa}"
+            "Observations / STOP Cards: {}\n\n"
+            "Incidents: {}\n\n"
+            "Audit Findings: {}\n\n"
+            "Open CAPA: {}".format(
+                observations,
+                incidents,
+                audits,
+                open_capa
+            )
         )
 
 
@@ -545,10 +1029,13 @@ class HSEApp(App):
         )
 
         grid.bind(
-            minimum_height=grid.setter("height")
+            minimum_height=grid.setter(
+                "height"
+            )
         )
 
         def label(text):
+
             return Label(
                 text=text,
                 size_hint_y=None,
@@ -670,7 +1157,9 @@ class HSEApp(App):
             Label(text="")
         )
 
-        scroll.add_widget(grid)
+        scroll.add_widget(
+            grid
+        )
 
         return scroll
 
@@ -742,32 +1231,49 @@ class HSEApp(App):
 
         conn.close()
 
-        docx = export_stop_card_docx(
-            doc_no,
-            self.obs_cat.text,
-            self.obs_type.text,
-            self.obs_priority.text,
-            self.obs_desc.text,
-            self.obs_action.text
-        )
+        try:
 
-        pdf = export_stop_card_pdf(
-            doc_no,
-            self.obs_cat.text,
-            self.obs_type.text,
-            self.obs_priority.text,
-            self.obs_desc.text,
-            self.obs_action.text
-        )
+            rtf = export_stop_card_rtf(
+                doc_no,
+                self.obs_cat.text,
+                self.obs_type.text,
+                self.obs_priority.text,
+                self.obs_desc.text,
+                self.obs_action.text
+            )
 
-        self.refresh_dashboard()
+            pdf = export_stop_card_pdf(
+                doc_no,
+                self.obs_cat.text,
+                self.obs_type.text,
+                self.obs_priority.text,
+                self.obs_desc.text,
+                self.obs_action.text
+            )
 
-        self.show_popup(
-            "Saved",
-            "Observation saved successfully.\n\n"
-            f"Word:\n{docx}\n\n"
-            f"PDF:\n{pdf}"
-        )
+            self.refresh_dashboard()
+
+            self.show_popup(
+                "Saved",
+                "Observation saved successfully.\n\n"
+                "Word-compatible RTF:\n{}\n\n"
+                "PDF:\n{}".format(
+                    rtf,
+                    pdf
+                )
+            )
+
+        except Exception as error:
+
+            self.refresh_dashboard()
+
+            self.show_popup(
+                "Saved - Export Error",
+                "Observation was saved successfully.\n\n"
+                "Report generation error:\n{}".format(
+                    error
+                )
+            )
 
 
 # ============================================================
@@ -786,7 +1292,9 @@ class HSEApp(App):
         )
 
         grid.bind(
-            minimum_height=grid.setter("height")
+            minimum_height=grid.setter(
+                "height"
+            )
         )
 
         grid.add_widget(
@@ -874,9 +1382,17 @@ class HSEApp(App):
             on_release=self.save_incident
         )
 
-        grid.add_widget(save)
+        grid.add_widget(
+            save
+        )
 
-        scroll.add_widget(grid)
+        grid.add_widget(
+            Label(text="")
+        )
+
+        scroll.add_widget(
+            grid
+        )
 
         return scroll
 
@@ -927,7 +1443,9 @@ class HSEApp(App):
 
         self.show_popup(
             "Saved",
-            f"Incident recorded.\n\n{doc_no}"
+            "Incident recorded.\n\n{}".format(
+                doc_no
+            )
         )
 
 
@@ -947,7 +1465,9 @@ class HSEApp(App):
         )
 
         grid.bind(
-            minimum_height=grid.setter("height")
+            minimum_height=grid.setter(
+                "height"
+            )
         )
 
         grid.add_widget(
@@ -1048,9 +1568,17 @@ class HSEApp(App):
             on_release=self.save_audit
         )
 
-        grid.add_widget(save)
+        grid.add_widget(
+            save
+        )
 
-        scroll.add_widget(grid)
+        grid.add_widget(
+            Label(text="")
+        )
+
+        scroll.add_widget(
+            grid
+        )
 
         return scroll
 
@@ -1092,7 +1620,9 @@ class HSEApp(App):
 
         self.show_popup(
             "Saved",
-            f"Audit finding recorded.\n\n{doc_no}"
+            "Audit finding recorded.\n\n{}".format(
+                doc_no
+            )
         )
 
 
@@ -1117,7 +1647,9 @@ class HSEApp(App):
             font_size="16sp"
         )
 
-        layout.add_widget(info)
+        layout.add_widget(
+            info
+        )
 
         export = Button(
             text="EXPORT CAPA TO EXCEL",
@@ -1129,7 +1661,9 @@ class HSEApp(App):
             on_release=self.export_excel
         )
 
-        layout.add_widget(export)
+        layout.add_widget(
+            export
+        )
 
         return layout
 
@@ -1142,7 +1676,9 @@ class HSEApp(App):
 
             self.show_popup(
                 "Export Complete",
-                f"Excel file created:\n\n{path}"
+                "Excel file created:\n\n{}".format(
+                    path
+                )
             )
 
         except Exception as error:
@@ -1157,7 +1693,11 @@ class HSEApp(App):
 # POPUP
 # ============================================================
 
-    def show_popup(self, title, message):
+    def show_popup(
+        self,
+        title,
+        message
+    ):
 
         content = BoxLayout(
             orientation="vertical",
@@ -1175,8 +1715,13 @@ class HSEApp(App):
             height=dp(50)
         )
 
-        content.add_widget(text)
-        content.add_widget(close)
+        content.add_widget(
+            text
+        )
+
+        content.add_widget(
+            close
+        )
 
         popup = Popup(
             title=title,
