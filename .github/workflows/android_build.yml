@@ -17,44 +17,32 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONFORANDROID_PREREQUISITES_INSTALL_INTERACTIVE: "0"
-
-      # Force Python networking to IPv4
-      PYTHONPATH: ${{ github.workspace }}/ci
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
     steps:
 
-      # ---------------------------------------------------------
-      # 1. Checkout
-      # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ---------------------------------------------------------
-      # 2. Python
-      # ---------------------------------------------------------
-      - name: Setup Python 3.11
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # ---------------------------------------------------------
-      # 3. Java
-      # ---------------------------------------------------------
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # ---------------------------------------------------------
-      # 4. Install Linux dependencies
-      # ---------------------------------------------------------
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
 
           sudo apt-get install -y \
             git \
+            curl \
+            wget \
             zip \
             unzip \
             autoconf \
@@ -70,38 +58,37 @@ jobs:
             libssl-dev \
             libltdl-dev \
             gettext \
-            autopoint \
-            curl
+            autopoint
 
-      # ---------------------------------------------------------
-      # 5. Check network using IPv4
-      # ---------------------------------------------------------
-      - name: Test IPv4 network
+      - name: Test network
         run: |
-          echo "Testing GitHub IPv4..."
-          curl -4 -I --connect-timeout 20 --retry 3 https://github.com
+          echo "======================================"
+          echo "NETWORK TEST"
+          echo "======================================"
 
-          echo "Testing PyPI IPv4..."
-          curl -4 -I --connect-timeout 20 --retry 3 https://pypi.org
+          curl -4 -L \
+            --connect-timeout 30 \
+            --max-time 120 \
+            --retry 5 \
+            --retry-delay 5 \
+            -I https://github.com
 
-          echo "Testing Google download server IPv4..."
-          curl -4 -I --connect-timeout 20 --retry 3 https://dl.google.com
+          curl -4 -L \
+            --connect-timeout 30 \
+            --max-time 120 \
+            --retry 5 \
+            --retry-delay 5 \
+            -I https://pypi.org
 
-      # ---------------------------------------------------------
-      # 6. Install Buildozer
-      # ---------------------------------------------------------
+          echo "Network test completed."
+
       - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
-
-          pip install --upgrade buildozer
-
+          pip install buildozer
           pip install "Cython==0.29.34"
 
-      # ---------------------------------------------------------
-      # 7. Show versions
-      # ---------------------------------------------------------
-      - name: Show build versions
+      - name: Show versions
         run: |
           echo "Python:"
           python --version
@@ -112,42 +99,30 @@ jobs:
           echo "Java:"
           java -version
 
-      # ---------------------------------------------------------
-      # 8. Clean old Buildozer data
-      # ---------------------------------------------------------
-      - name: Clean Buildozer cache
+      - name: Clean previous build
         run: |
           rm -rf .buildozer
           rm -rf bin
 
-      # ---------------------------------------------------------
-      # 9. Build APK
-      # ---------------------------------------------------------
       - name: Build APK
         run: |
           buildozer -v android debug
 
-      # ---------------------------------------------------------
-      # 10. Find APK
-      # ---------------------------------------------------------
-      - name: Find APK
+      - name: Search APK
         if: always()
         run: |
-          echo "===================================="
-          echo "APK SEARCH"
-          echo "===================================="
+          echo "======================================"
+          echo "APK FILES"
+          echo "======================================"
 
           find . -type f -name "*.apk" -print
 
-          echo "===================================="
-          echo "BIN DIRECTORY"
-          echo "===================================="
+          echo "======================================"
+          echo "BIN"
+          echo "======================================"
 
           ls -lah bin 2>/dev/null || true
 
-      # ---------------------------------------------------------
-      # 11. Upload APK
-      # ---------------------------------------------------------
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
