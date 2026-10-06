@@ -21,25 +21,16 @@ jobs:
 
     steps:
 
-      # ==========================================================
-      # 1. CHECKOUT
-      # ==========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
-      # ==========================================================
-      # 2. PYTHON
-      # ==========================================================
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
 
-      # ==========================================================
-      # 3. JAVA
-      # ==========================================================
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -47,9 +38,6 @@ jobs:
           java-version: "17"
 
 
-      # ==========================================================
-      # 4. LINUX DEPENDENCIES
-      # ==========================================================
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -76,9 +64,6 @@ jobs:
             autopoint
 
 
-      # ==========================================================
-      # 5. BUILDODOZER
-      # ==========================================================
       - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
@@ -86,9 +71,6 @@ jobs:
           pip install "Cython==0.29.34"
 
 
-      # ==========================================================
-      # 6. SHOW VERSIONS
-      # ==========================================================
       - name: Show versions
         run: |
           python --version
@@ -96,9 +78,6 @@ jobs:
           java -version
 
 
-      # ==========================================================
-      # 7. CLEAN OLD BUILD
-      # ==========================================================
       - name: Clean old Buildozer files
         run: |
           rm -rf .buildozer
@@ -106,20 +85,10 @@ jobs:
 
 
       # ==========================================================
-      # 8. GET FREETYPE FROM GITHUB
-      #
-      # IMPORTANT:
-      # DO NOT USE SAVANNAH.
-      #
-      # Python-for-Android normally downloads FreeType from
-      # download.savannah.gnu.org.
-      #
-      # Savannah is timing out on GitHub Actions.
-      #
-      # We therefore clone the official FreeType GitHub mirror
-      # and tell p4a to use this local source.
+      # DOWNLOAD FREETYPE FROM GITHUB
+      # NO SAVANNAH DOWNLOAD
       # ==========================================================
-      - name: Prepare FreeType from GitHub
+      - name: Prepare FreeType
         run: |
           set -e
 
@@ -127,7 +96,6 @@ jobs:
 
           echo "=========================================="
           echo "Preparing FreeType 2.14.1"
-          echo "Source: GitHub"
           echo "=========================================="
 
           rm -rf "$FREETYPE_DIR"
@@ -139,54 +107,58 @@ jobs:
             "$FREETYPE_DIR"
 
           echo "=========================================="
-          echo "FreeType downloaded"
+          echo "Checking FreeType"
           echo "=========================================="
 
-          test -f "$FREETYPE_DIR/CMakeLists.txt"
+          test -d "$FREETYPE_DIR"
           test -d "$FREETYPE_DIR/src"
           test -d "$FREETYPE_DIR/include"
+          test -f "$FREETYPE_DIR/CMakeLists.txt"
 
-          echo "FreeType source:"
+          echo "FreeType location:"
+          echo "$FREETYPE_DIR"
+
+          echo "FreeType files:"
           ls -lah "$FREETYPE_DIR"
 
-          echo "FreeType version:"
-          grep -n "FREETYPE_MAJOR" \
-            "$FREETYPE_DIR/include/freetype/freetype.h" | head -1 || true
-
-          echo "FreeType source is ready."
+          echo "=========================================="
+          echo "FreeType READY"
+          echo "=========================================="
 
 
       # ==========================================================
-      # 9. BUILD APK
+      # BUILD APK
       #
-      # P4A_freetype_DIR tells python-for-android:
+      # IMPORTANT:
+      # Set P4A_freetype_DIR INSIDE the shell.
       #
-      # "Use this directory instead of downloading FreeType."
-      #
-      # This completely bypasses Savannah.
+      # Do NOT use:
+      # ${{ env.HOME }}
       # ==========================================================
       - name: Build APK
-        env:
-          P4A_freetype_DIR: ${{ env.HOME }}/freetype-source
         run: |
+          set -e
+
+          export P4A_freetype_DIR="$HOME/freetype-source"
+
           echo "=========================================="
           echo "P4A FREETYPE SOURCE"
           echo "=========================================="
 
-          echo "$P4A_freetype_DIR"
+          echo "HOME = $HOME"
+          echo "P4A_freetype_DIR = $P4A_freetype_DIR"
 
           test -d "$P4A_freetype_DIR"
+          test -d "$P4A_freetype_DIR/src"
+          test -d "$P4A_freetype_DIR/include"
 
           echo "=========================================="
-          echo "BUILDING APK"
+          echo "Starting Buildozer"
           echo "=========================================="
 
           buildozer -v android debug
 
 
-      # ==========================================================
-      # 10. FIND APK
-      # ==========================================================
       - name: Search APK
         if: always()
         run: |
@@ -203,9 +175,6 @@ jobs:
           ls -lah bin 2>/dev/null || true
 
 
-      # ==========================================================
-      # 11. UPLOAD APK
-      # ==========================================================
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
