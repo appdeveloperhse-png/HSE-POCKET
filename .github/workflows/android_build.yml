@@ -16,7 +16,6 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -31,9 +30,21 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install dependencies
+      - name: Check Internet Connectivity
+        run: |
+          echo "Checking GitHub..."
+          curl -I --retry 3 --connect-timeout 20 https://github.com
+
+          echo "Checking PyPI..."
+          curl -I --retry 3 --connect-timeout 20 https://pypi.org
+
+          echo "Checking Google..."
+          curl -I --retry 3 --connect-timeout 20 https://dl.google.com
+
+      - name: Install Linux Dependencies
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             git \
             zip \
@@ -43,25 +54,46 @@ jobs:
             libtool \
             pkg-config \
             cmake \
+            zlib1g-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libtinfo6 \
             libffi-dev \
             libssl-dev \
-            zlib1g-dev
+            libltdl-dev \
+            gettext \
+            autopoint
 
       - name: Install Buildozer
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools
           pip install buildozer
           pip install cython==0.29.34
 
+      - name: Show Build Environment
+        run: |
+          python --version
+          buildozer --version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_NDK=$ANDROID_NDK"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          echo "ANDROIDAPI=$ANDROIDAPI"
+          echo "ANDROIDMINAPI=$ANDROIDMINAPI"
+
       - name: Build APK
+        env:
+          PYTHONFORANDROID_PREREQUISITES_INSTALL_INTERACTIVE: "0"
         run: |
           buildozer -v android debug
 
-      - name: List APK
+      - name: Find APK
+        if: always()
         run: |
-          find bin -type f -name "*.apk" -print
+          echo "Searching for APK..."
+          find . -type f -name "*.apk" -print
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: HSE-Management-System-APK
