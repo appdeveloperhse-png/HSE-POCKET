@@ -2,40 +2,54 @@ name: Build Android APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
-
   build:
 
     runs-on: ubuntu-22.04
 
     steps:
 
-      # ======================================================
-      # CHECKOUT
-      # ======================================================
-
+      # ---------------------------------------------------------
+      # 1. Checkout
+      # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
-      # ======================================================
-      # SYSTEM DEPENDENCIES
-      # ======================================================
+      # ---------------------------------------------------------
+      # 2. Python 3.11
+      # ---------------------------------------------------------
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
+
+      # ---------------------------------------------------------
+      # 3. Java 17
+      # ---------------------------------------------------------
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+
+      # ---------------------------------------------------------
+      # 4. Install Linux dependencies
+      # ---------------------------------------------------------
       - name: Install system dependencies
         run: |
-
           sudo apt-get update
 
           sudo apt-get install -y \
-            python3 \
-            python3-pip \
-            python3-venv \
             git \
             zip \
             unzip \
-            openjdk-17-jdk \
             autoconf \
             automake \
             libtool \
@@ -57,40 +71,23 @@ jobs:
             autopoint
 
 
-      # ======================================================
-      # PYTHON
-      # ======================================================
-
-      - name: Configure Python
+      # ---------------------------------------------------------
+      # 5. Upgrade Python build tools
+      # ---------------------------------------------------------
+      - name: Install Python build tools
         run: |
+          python -m pip install --upgrade pip setuptools wheel
 
-          python3 --version
-
-          python3 -m pip install --upgrade pip setuptools wheel
-
-
-      # ======================================================
-      # BUILDOTOOLS
-      # ======================================================
-
-      - name: Install Buildozer and Cython
-        run: |
-
-          python3 -m pip install \
+          python -m pip install \
             buildozer==1.6.0 \
             "Cython==0.29.34"
 
 
-      # ======================================================
-      # FREE TYPE SOURCE
-      #
-      # Savannah download is unavailable in the runner.
-      # Use GitHub source instead.
-      # ======================================================
-
-      - name: Prepare FreeType source
+      # ---------------------------------------------------------
+      # 6. Prepare FreeType from GitHub
+      # ---------------------------------------------------------
+      - name: Prepare FreeType
         run: |
-
           FREETYPE_DIR="$HOME/freetype-source"
 
           rm -rf "$FREETYPE_DIR"
@@ -101,71 +98,150 @@ jobs:
             https://github.com/freetype/freetype.git \
             "$FREETYPE_DIR"
 
-          echo "FreeType source prepared:"
+          echo "FreeType source:"
           echo "$FREETYPE_DIR"
 
           test -f "$FREETYPE_DIR/CMakeLists.txt"
 
 
-      # ======================================================
-      # CLEAN PREVIOUS BUILD
-      # ======================================================
+      # ---------------------------------------------------------
+      # 7. Fix Android requirements
+      #
+      # IMPORTANT:
+      # charset-normalizer 3.x causes the
+      # cp314-android wheel error.
+      #
+      # We force the known working 2.1.1 version.
+      # ---------------------------------------------------------
+      - name: Fix Android Python requirements
+        run: |
+          python - <<'PY'
+          from pathlib import Path
 
+          path = Path("buildozer.spec")
+          text = path.read_text()
+
+          # Remove any existing charset-normalizer entry
+          text = text.replace(",charset-normalizer", "")
+          text = text.replace("charset-normalizer,", "")
+
+          # Add a pinned pure-Python version
+          old = "requirements = python3,kivy,openpyxl"
+
+          new = (
+              "requirements = "
+              "python3,kivy,openpyxl,charset-normalizer==2.1.1"
+          )
+
+          if old in text:
+              text = text.replace(old, new)
+          else:
+              lines = text.splitlines()
+
+              for i, line in enumerate(lines):
+                  if line.strip().startswith("requirements ="):
+                      lines[i] = new
+                      break
+              else:
+                  raise SystemExit(
+                      "Could not find requirements line in buildozer.spec"
+                  )
+
+              text = "\n".join(lines) + "\n"
+
+          # Force stable python-for-android branch
+          if "p4a.branch" not in text:
+              text += "\np4a.branch = master\n"
+
+          path.write_text(text)
+
+          print("Updated buildozer.spec:")
+          print()
+          print(path.read_text())
+          PY
+
+
+      # ---------------------------------------------------------
+      # 8. Show versions
+      # ---------------------------------------------------------
+      - name: Show build versions
+        run: |
+          echo "Python:"
+          python --version
+
+          echo
+          echo "Pip:"
+          pip --version
+
+          echo
+          echo "Buildozer:"
+          buildozer --version
+
+          echo
+          echo "Java:"
+          java -version
+
+          echo
+          echo "Buildozer requirements:"
+          grep "^requirements" buildozer.spec
+
+          echo
+          echo "p4a branch:"
+          grep "^p4a.branch" buildozer.spec || true
+
+
+      # ---------------------------------------------------------
+      # 9. Clean previous Android build
+      # ---------------------------------------------------------
       - name: Clean Buildozer
         run: |
-
           rm -rf .buildozer
           rm -rf bin
 
           mkdir -p bin
 
 
-      # ======================================================
-      # BUILD APK
-      # ======================================================
-
+      # ---------------------------------------------------------
+      # 10. Build APK
+      # ---------------------------------------------------------
       - name: Build APK
+        env:
+          P4A_freetype_DIR: /home/runner/freetype-source
         run: |
 
           export P4A_freetype_DIR="$HOME/freetype-source"
 
-          echo "P4A FREETYPE SOURCE"
+          echo "----------------------------------------"
+          echo "FreeType:"
           echo "$P4A_freetype_DIR"
+          echo "----------------------------------------"
 
           test -d "$P4A_freetype_DIR"
 
           buildozer -v android debug
 
 
-      # ======================================================
-      # SHOW APK
-      # ======================================================
-
-      - name: List APK files
+      # ---------------------------------------------------------
+      # 11. Find APK
+      # ---------------------------------------------------------
+      - name: Find APK
         if: always()
         run: |
+          echo "----------------------------------------"
+          echo "APK FILES"
+          echo "----------------------------------------"
 
-          echo "APK files:"
-
-          find bin \
-            -type f \
-            -name "*.apk" \
-            -print || true
+          find . -type f -name "*.apk" -print || true
 
 
-      # ======================================================
-      # UPLOAD APK
-      # ======================================================
-
+      # ---------------------------------------------------------
+      # 12. Upload APK
+      # ---------------------------------------------------------
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
-
         with:
-
           name: HSE-Management-APK
-
           path: |
             bin/*.apk
-
           if-no-files-found: error
