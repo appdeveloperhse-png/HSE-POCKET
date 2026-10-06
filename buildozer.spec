@@ -6,14 +6,14 @@ package.domain = org.hse
 
 source.dir = .
 
-source.include_exts = py,png,jpg,jpeg,kv,atlas,ttf,otf,txt,rtf,pdf,xlsx,csv
+source.include_exts = py,png,jpg,jpeg,kv,atlas,ttf,otf,txt,rtf,pdf,csv
 
 version = 1.0.0
 
 orientation = portrait
 fullscreen = 0
 
-requirements = python3,kivy,openpyxl
+requirements = python3,kivy
 
 android.api = 35
 android.minapi = 24
