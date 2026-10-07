@@ -736,4 +736,556 @@ class AppHSE(App):
             i = self.db.add('observations', {
                 'date': self.od.text.strip(), 'time': self.oti.text.strip(), 'location': self.ol.text.strip(),
                 'responsible': self.orp.text.strip(), 'designation': self.odg.text.strip(),
-                'department': self.odept.text, 'type': self.ot.text, 'category
+                'department': self.odept.text, 'type': self.ot.text, 'category': self.oc.text,
+                'observation': self.ox.text.strip(), 'action': self.oa.text.strip(),
+                'status': self.os.text, 'observed_by': self.ob.text.strip(), 'observer_id': self.obi.text.strip(),
+                'observer_designation': self.obd.text.strip(), 'evidence': self.oe.text.strip(),
+                'photo_path': self.photo_path,
+                'created_at': now()
+            })
+            self.selected_observations = {}
+            msg('Saved', 'Observation #%d saved successfully.\n\nOpen the Observation Register to select it and draft the SOP card.' % i)
+            self.refresh()
+        except Exception as e:
+            msg('Save Error', str(e))
+
+    def observation_register(self):
+        rows = self.db.observation_rows()
+        self.selected_observations = {}
+        self.obs_checkboxes = {}
+        root = BoxLayout(orientation='vertical', spacing=dp(6), padding=dp(7))
+        root.add_widget(L('OBSERVATION REGISTER', 16, NAVY, True, 34))
+        root.add_widget(L('Select one or more observations, then press DRAFT SOP CARD.', 10, MUTED, False, 28))
+
+        # Fixed-width horizontal table so the register remains readable on a phone.
+        widths = [45, 50, 72, 80, 90, 145, 155, 240, 72]
+        headers = ['SEL','ID','DATE','TIME','LOCATION','TYPE','CATEGORY','OBSERVATION','STATUS']
+        hs = ScrollView(do_scroll_x=True, do_scroll_y=False, size_hint_y=None, height=dp(44), bar_width=dp(4))
+        hg = GridLayout(cols=len(headers), size_hint=(None, None), height=dp(42), spacing=dp(1))
+        for text, width in zip(headers, widths):
+            hg.add_widget(TableCell(text, True, width))
+        hg.width = dp(sum(widths) + len(widths)-1)
+        hs.add_widget(hg)
+        root.add_widget(hs)
+
+        vs = ScrollView(do_scroll_x=True, do_scroll_y=True, bar_width=dp(4))
+        vg = GridLayout(cols=len(headers), size_hint=(None, None), spacing=dp(1))
+        vg.bind(minimum_height=vg.setter('height'))
+        vg.width = dp(sum(widths) + len(widths)-1)
+        for r in rows:
+            cb = CheckBox(size_hint=(None, None), size=(dp(45), dp(46)))
+            self.obs_checkboxes[int(r['id'])] = cb
+            cb.bind(active=lambda obj, val, rid=int(r['id']): self.toggle_observation(rid, val))
+            cell = BoxLayout(size_hint=(None, None), size=(dp(45), dp(46)))
+            cell.add_widget(cb)
+            vg.add_widget(cell)
+            vals = [r['id'], r['date'], r['time'] if 'time' in r.keys() else '', r['location'], r['type'], r['category'], r['observation'], r['status']]
+            for v, width in zip(vals, widths[1:]):
+                vg.add_widget(TableCell(v or '-', False, width))
+        if not rows:
+            vg.add_widget(TableCell('No observations found.', False, sum(widths)))
+        vs.add_widget(vg)
+        root.add_widget(vs)
+
+        controls = GridLayout(cols=2, spacing=dp(5), size_hint_y=None, height=dp(195))
+        for text, col, fn in [
+            ('SELECT ALL', TEAL, lambda _: self.select_all_observations(rows)),
+            ('CLEAR SELECTION', ORANGE, lambda _: self.clear_observation_selection()),
+            ('DRAFT SOP CARD', BLUE, lambda _: self.draft_sop_cards()),
+            ('EXPORT PDF REGISTER', RED, lambda _: self.export_observation_register_pdf()),
+            ('EXPORT WORD REGISTER', NAVY, lambda _: self.export_observation_register_word()),
+            ('EXPORT EXCEL REGISTER', GREEN, lambda _: self.export_observation_register_excel()),
+            ('CLOSE REGISTER', NAVY, lambda _: self.close_observation_register()),
+        ]:
+            bb = B(text, col, 44, 8)
+            bb.bind(on_release=fn)
+            controls.add_widget(bb)
+        root.add_widget(controls)
+        p = Popup(title='Observation Register', content=root, size_hint=(.98, .94), auto_dismiss=False)
+        p.open()
+        self.obs_register_popup = p
+
+    def close_observation_register(self):
+        p = getattr(self, 'obs_register_popup', None)
+        if p:
+            p.dismiss()
+
+    def toggle_observation(self, rid, active):
+        if active:
+            self.selected_observations[int(rid)] = True
+        else:
+            self.selected_observations.pop(int(rid), None)
+
+    def select_all_observations(self, rows):
+        self.selected_observations = {int(r['id']): True for r in rows}
+        for rid, cb in getattr(self, 'obs_checkboxes', {}).items():
+            cb.active = rid in self.selected_observations
+
+    def clear_observation_selection(self):
+        self.selected_observations = {}
+        for cb in getattr(self, 'obs_checkboxes', {}).values():
+            cb.active = False
+
+    def selected_observation_rows(self):
+        ids = list(self.selected_observations.keys())
+        if not ids:
+            return []
+        placeholders = ','.join('?' * len(ids))
+        return self.db.c.execute(
+            'select * from observations where id in (%s) order by id' % placeholders, ids
+        ).fetchall()
+
+    def draft_sop_cards(self):
+        rows = self.selected_observation_rows()
+        if not rows:
+            return msg('SOP Card', 'Select one or more observations first.')
+        self.sop_rows = rows
+
+        root = BoxLayout(orientation='vertical', spacing=dp(6), padding=dp(7))
+        root.add_widget(L('SOP SAFETY OBSERVATION CARD - DRAFT', 16, NAVY, True, 34))
+        root.add_widget(L('%d observation(s) selected. Each observation = one card page.' % len(rows), 10, MUTED, False, 26))
+
+        # Preview the first selected card inside the application.
+        r = rows[0]
+        preview_scroll = ScrollView(bar_width=dp(5))
+        card = Card(orientation='vertical', padding=dp(12), spacing=dp(4), size_hint_y=None, height=dp(900))
+        logo = self.db.setting('logo_path')
+        if logo and os.path.isfile(logo):
+            img = Image(source=logo, size_hint_y=None, height=dp(70), allow_stretch=True, keep_ratio=True)
+            card.add_widget(img)
+        else:
+            card.add_widget(L('', 10, TEXT, False, 45))
+
+        company = self.db.setting('company_name')
+        project = self.db.setting('project_name')
+        card.add_widget(L('SAFETY OBSERVATION CARD', 19, NAVY, True, 38))
+        card.add_widget(L(company, 12, TEXT, True, 28))
+        card.add_widget(L(project, 11, TEXT, True, 34))
+        card.add_widget(L('PERSON INFORMATION', 13, NAVY, True, 30))
+        card.add_widget(L('Department: %s    |    Location: %s' % (r['department'] or '', r['location'] or ''), 10, TEXT, False, 28))
+        card.add_widget(L('In-Charge: %s    |    Designation: %s' % (r['responsible'] or '', r['designation'] or ''), 10, TEXT, False, 32))
+        card.add_widget(L('Date: %s    |    Time: %s' % (r['date'] or '', (r['time'] if 'time' in r.keys() else '') or ''), 10, TEXT, False, 28))
+
+        card.add_widget(L('TYPE OF OBSERVATION', 13, NAVY, True, 30))
+        for item in OBS_TYPES:
+            card.add_widget(L(('[X] ' if r['type'] == item else '[ ] ') + item, 10, TEXT, False, 25))
+
+        card.add_widget(L('DESCRIPTION OF THE OBSERVATION', 13, NAVY, True, 30))
+        d = L(r['observation'] or '', 10, TEXT, False, 100)
+        d.size_hint_y = None
+        d.text_size = (None, None)
+        d.bind(texture_size=lambda o, v: setattr(o, 'height', max(dp(80), v[1]+dp(10))))
+        card.add_widget(d)
+
+        card.add_widget(L('IMMEDIATE CORRECTIVE ACTION TAKEN (IF ANY)', 13, NAVY, True, 34))
+        a = L(r['action'] or '', 10, TEXT, False, 90)
+        a.size_hint_y = None
+        a.bind(texture_size=lambda o, v: setattr(o, 'height', max(dp(70), v[1]+dp(10))))
+        card.add_widget(a)
+
+        card.add_widget(L('OBSERVATION STATUS', 13, NAVY, True, 30))
+        card.add_widget(L('%s Open    %s Closed    %s STOP Work' % (
+            '[X]' if r['status'] == 'Open' else '[ ]',
+            '[X]' if r['status'] == 'Closed' else '[ ]',
+            '[X]' if r['status'] == 'STOP Work' else '[ ]'), 10, TEXT, False, 28))
+
+        card.add_widget(L('OBSERVATION CATEGORIES', 13, NAVY, True, 30))
+        for item in OBS_CATEGORIES:
+            card.add_widget(L(('[X] ' if r['category'] == item else '[ ] ') + item, 9, TEXT, False, 22))
+
+        card.add_widget(L("OBSERVER'S INFORMATION", 13, NAVY, True, 30))
+        card.add_widget(L('Name: %s    |    Emp.#: %s' % (r['observed_by'] or '', r['observer_id'] or ''), 10, TEXT, False, 28))
+        card.add_widget(L('Designation: %s' % (r['observer_designation'] or ''), 10, TEXT, False, 28))
+        card.add_widget(L('Signature: ________________________________', 10, TEXT, False, 32))
+        preview_scroll.add_widget(card)
+        root.add_widget(preview_scroll)
+
+        actions = GridLayout(cols=2, spacing=dp(5), size_hint_y=None, height=dp(96))
+        save = B('SAVE SOP CARD PDF', BLUE, 44, 9)
+        close = B('CLOSE', NAVY, 44, 9)
+        actions.add_widget(save); actions.add_widget(close)
+        root.add_widget(actions)
+        p = Popup(title='SOP Card Draft', content=root, size_hint=(.98, .96), auto_dismiss=False)
+        close.bind(on_release=p.dismiss)
+        save.bind(on_release=lambda _: self.save_sop_draft(rows, p))
+        p.open()
+        self.sop_draft_popup = p
+
+    def save_sop_draft(self, rows, popup=None):
+        # Always rebuild from the database so the latest Settings logo/company/project are used.
+        fresh = self.selected_observation_rows()
+        if fresh:
+            rows = fresh
+        self.export_sop_cards_pdf(rows)
+        if popup:
+            popup.dismiss()
+
+    def sop_page(self, r, page_no, total, logo_path):
+        # One selected observation = exactly one PDF page.
+        # The supplied two-sided card is condensed into one printable A4 page.
+        W, H = 595, 842
+        c = ''
+        c += '0.8 w\n32 30 m 563 30 l 563 812 l 32 812 l 32 30 l S\n'
+        company = self.db.setting('company_name')
+        project = self.db.setting('project_name')
+        c += pdf_text(205, 806, 'Safety Observation Card', 15)
+        c += pdf_text(55, 784, company or ' ', 10)
+        c += pdf_text(55, 766, project or ' ', 9)
+        if logo_path and os.path.isfile(logo_path):
+            c += 'q 485 750 55 55 cm /Im1 Do Q\n'
+
+        # Person information
+        c += pdf_text(55, 735, 'Person Information', 10)
+        c += pdf_line(55, 731, 160, 731)
+        department = r['department'] if 'department' in r.keys() else ''
+        c += pdf_text(60, 710, ('[X]' if department == 'CIVIL' else '[ ]') + ' CIVIL', 8)
+        c += pdf_text(150, 710, ('[X]' if department == 'MECH.' else '[ ]') + ' MECH.', 8)
+        c += pdf_text(245, 710, 'Location:', 8)
+        c += pdf_text(295, 710, r['location'] or '', 8)
+        c += pdf_text(60, 690, 'In-Charge:', 8)
+        c += pdf_text(120, 690, r['responsible'] or '', 8)
+        c += pdf_text(300, 690, 'Designation:', 8)
+        c += pdf_text(370, 690, r['designation'] or '', 8)
+        c += pdf_text(60, 670, 'Date:', 8)
+        c += pdf_text(100, 670, r['date'] or '', 8)
+        c += pdf_text(250, 670, 'Time:', 8)
+        c += pdf_text(285, 670, (r['time'] if 'time' in r.keys() else '') or '', 8)
+
+        # Type
+        c += pdf_text(55, 646, 'Type of Observation', 10)
+        ty = 626
+        for key in OBS_TYPES:
+            mark = '[X]' if r['type'] == key else '[ ]'
+            c += pdf_text(60, ty, mark + ' ' + key, 7)
+            ty -= 18
+
+        # Description and action
+        c += pdf_text(55, 548, 'Description of the Observation', 10)
+        desc_lines = self.wrap_text(r['observation'] or '', 88)[:4]
+        yy = 530
+        for line in desc_lines:
+            c += pdf_text(60, yy, line, 7)
+            yy -= 14
+        for off in (8, 26, 44, 62):
+            c += pdf_line(55, 522-off, 540, 522-off)
+
+        c += pdf_text(55, 438, 'Immediate Corrective Action Taken (if any)', 10)
+        act_lines = self.wrap_text(r['action'] or '', 88)[:3]
+        yy = 420
+        for line in act_lines:
+            c += pdf_text(60, yy, line, 7)
+            yy -= 14
+        for off in (8, 26, 44):
+            c += pdf_line(55, 412-off, 540, 412-off)
+
+        c += pdf_text(55, 340, 'Observation Status', 10)
+        status = r['status'] or ''
+        c += pdf_text(65, 320, ('[X]' if status == 'Open' else '[ ]') + ' Open', 8)
+        c += pdf_text(190, 320, ('[X]' if status == 'Closed' else '[ ]') + ' Closed', 8)
+        c += pdf_text(330, 320, ('[X]' if status == 'STOP Work' else '[ ]') + ' STOP Work', 8)
+
+        # Categories: all supplied card categories, two columns.
+        c += pdf_text(55, 295, 'Observation Categories', 10)
+        left = OBS_CATEGORIES[:14]
+        right = OBS_CATEGORIES[14:]
+        y1 = 275
+        for item in left:
+            mark = '[X]' if r['category'] == item else '[ ]'
+            c += pdf_text(58, y1, mark + ' ' + item, 6)
+            y1 -= 16
+        y2 = 275
+        for item in right:
+            mark = '[X]' if r['category'] == item else '[ ]'
+            c += pdf_text(305, y2, mark + ' ' + item, 6)
+            y2 -= 16
+
+        # Observer information
+        c += pdf_text(55, 54, "Observer's Information", 9)
+        c += pdf_text(60, 38, 'Name: ' + (r['observed_by'] or ''), 7)
+        observer_id = r['observer_id'] if 'observer_id' in r.keys() else ''
+        observer_desig = r['observer_designation'] if 'observer_designation' in r.keys() else ''
+        c += pdf_text(245, 38, 'Emp.#: ' + (observer_id or ''), 7)
+        c += pdf_text(365, 38, 'Designation: ' + (observer_desig or r['designation'] or ''), 7)
+        c += pdf_text(60, 18, 'Signature: ____________________________', 7)
+        c += pdf_text(350, 18, 'SAFETY FIRST, THINK SAFE, BE SAFE & SAVE ENVIRONMENT', 5)
+        return c
+
+    def export_sop_cards_pdf(self, rows):
+        logo = self.db.setting('logo_path')
+        pages = [self.sop_page(r, i + 1, len(rows), logo) for i, r in enumerate(rows)]
+        name = 'SOP_Safety_Observation_Cards_%s.pdf' % datetime.now().strftime('%Y%m%d_%H%M%S')
+        path = os.path.join(self.export_dir, name)
+        build_pdf(pages, path, logo)
+        self.request_save_file(path, name, 'application/pdf')
+
+    # ---------- Observation exports ----------
+    def observation_export_data(self):
+        rows = self.db.observation_rows()
+        keys = ['id','date','time','location','responsible','designation','department','type','category','observation','action','status','observed_by','observer_id','observer_designation','evidence','created_at']
+        return rows, keys
+
+    def export_observation_register_pdf(self):
+        rows, keys = self.observation_export_data()
+        if not rows:
+            return msg('Export', 'No observations available.')
+        pages = []
+        lines_per_page = 45
+        header = 'OBSERVATION REGISTER | %s | %s' % (self.db.setting('company_name'), self.db.setting('project_name'))
+        for start in range(0, len(rows), lines_per_page):
+            c = pdf_text(30, 810, header[:100], 11)
+            c += pdf_text(30, 792, 'ID | DATE | LOCATION | TYPE | CATEGORY | OBSERVATION | STATUS', 7)
+            y = 775
+            for r in rows[start:start+lines_per_page]:
+                text = '%s | %s | %s | %s | %s | %s | %s' % (
+                    r['id'], r['date'], r['location'], r['type'], r['category'], r['observation'], r['status']
+                )
+                # Keep each line short enough for a PDF page.
+                for line in self.wrap_text(text, 120)[:3]:
+                    c += pdf_text(30, y, line, 6)
+                    y -= 11
+                y -= 3
+            pages.append(c)
+        name = 'Observation_Register_%s.pdf' % datetime.now().strftime('%Y%m%d_%H%M%S')
+        path = os.path.join(self.export_dir, name)
+        build_pdf(pages, path)
+        self.request_save_file(path, name, 'application/pdf')
+
+    def wrap_text(self, text, width):
+        words = str(text or '').split()
+        lines = []
+        line = ''
+        for w in words:
+            if len(line) + len(w) + 1 > width and line:
+                lines.append(line)
+                line = w
+            else:
+                line = (line + ' ' + w).strip()
+        if line:
+            lines.append(line)
+        return lines or ['']
+
+    def rtf_escape(self, s):
+        return str(s or '').replace('\\', '\\\\').replace('{', '\\{').replace('}', '\\}').replace('\n', '\\line ')
+
+    def rtf_logo(self, path):
+        if not path or not os.path.isfile(path):
+            return ''
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in ('.png', '.jpg', '.jpeg'):
+            return ''
+        try:
+            data = open(path, 'rb').read()
+            hexdata = data.hex()
+            control = '\\pngblip' if ext == '.png' else '\\jpegblip'
+            return '{\\pict%s\\picwgoal2400\\pichgoal1400\n%s}' % (control, hexdata)
+        except Exception:
+            return ''
+
+    def export_observation_register_word(self):
+        rows, keys = self.observation_export_data()
+        if not rows:
+            return msg('Export', 'No observations available.')
+        # RTF content saved as .doc so Microsoft Word can open it directly.
+        widths = [500, 900, 700, 1300, 1450, 1300, 850, 1650, 1650, 4200, 1200]
+        headers = ['ID','DATE','TIME','LOCATION','RESPONSIBLE','DESIGNATION','DEPT.','TYPE','CATEGORY','OBSERVATION','STATUS']
+        rtf = ['{\\rtf1\\ansi\\deff0', '{\\fonttbl{\\f0 Arial;}}', '\\landscape\\paperw16840\\paperh11900']
+        rtf.append(self.rtf_logo(self.db.setting('logo_path')))
+        rtf.append('\\fs24\\b %s\\b0\\line ' % self.rtf_escape(self.db.setting('company_name')))
+        rtf.append('\\fs22\\b %s\\b0\\line\\line ' % self.rtf_escape(self.db.setting('project_name')))
+        rtf.append('\\fs20\\b OBSERVATION REGISTER\\b0\\line ')
+        for r in rows:
+            rtf.append('\\trowd\\trrh-2880')  # 2 inches = 2880 twips
+            pos = 0
+            vals = [r['id'], r['date'], r['time'], r['location'], r['responsible'], r['designation'], r['department'], r['type'], r['category'], r['observation'], r['status']]
+            for w, v in zip(widths, vals):
+                pos += w
+                rtf.append('\\cellx%d' % pos)
+            for v in vals:
+                rtf.append('\\pard\\intbl\\fs18\\b0 %s\\cell' % self.rtf_escape(v))
+            rtf.append('\\row')
+        rtf.append('}')
+        name = 'Observation_Register_%s.doc' % datetime.now().strftime('%Y%m%d_%H%M%S')
+        path = os.path.join(self.export_dir, name)
+        with open(path, 'w', encoding='latin-1', errors='replace') as f:
+            f.write(''.join(rtf))
+        self.request_save_file(path, name, 'application/msword')
+
+    def export_observation_register_excel(self):
+        rows, keys = self.observation_export_data()
+        if not rows:
+            return msg('Export', 'No observations available.')
+        logo_html = ''
+        logo = self.db.setting('logo_path')
+        if logo and os.path.isfile(logo):
+            ext = os.path.splitext(logo)[1].lower()
+            if ext in ('.png', '.jpg', '.jpeg'):
+                mime = 'image/png' if ext == '.png' else 'image/jpeg'
+                try:
+                    data = base64.b64encode(open(logo, 'rb').read()).decode('ascii')
+                    logo_html = '<img style="max-height:90px;max-width:220px" src="data:%s;base64,%s">' % (mime, data)
+                except Exception:
+                    logo_html = ''
+        headers = ['ID','DATE','TIME','LOCATION','RESPONSIBLE','DESIGNATION','DEPT.','TYPE','CATEGORY','OBSERVATION','ACTION','STATUS','OBSERVED BY','EMP.#','OBSERVER DESIGNATION','EVIDENCE','CREATED AT']
+        html = ['<html><head><meta charset="utf-8"><style>@page{size:landscape;}body{font-family:Arial;font-size:10pt;}table{border-collapse:collapse;width:100%%;}th,td{border:1px solid #777;padding:5px;vertical-align:top;}th{background:#17243b;color:white;}tr{height:144pt;}</style></head><body>']
+        html.append(logo_html)
+        html.append('<h2>%s</h2><h3>%s</h3><h3>Observation Register</h3><table><tr>%s</tr>' % (
+            self.html_escape(self.db.setting('company_name')),
+            self.html_escape(self.db.setting('project_name')),
+            ''.join('<th>%s</th>' % h for h in headers)
+        ))
+        for r in rows:
+            html.append('<tr>%s</tr>' % ''.join('<td>%s</td>' % self.html_escape(r[k]) for k in ['id','date','time','location','responsible','designation','department','type','category','observation','action','status','observed_by','observer_id','observer_designation','evidence','created_at']))
+        html.append('</table></body></html>')
+        name = 'Observation_Register_%s.xls' % datetime.now().strftime('%Y%m%d_%H%M%S')
+        path = os.path.join(self.export_dir, name)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(''.join(html))
+        self.request_save_file(path, name, 'application/vnd.ms-excel')
+
+    def html_escape(self, v):
+        s = str(v if v is not None else '')
+        return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;')
+
+    # ---------- Incidents ----------
+    def incidents(self):
+        s, g = self.form()
+        g.add_widget(L('INCIDENT / ACCIDENT INVESTIGATION', 16, NAVY, True, 30))
+        g.add_widget(L('Includes ICAM, RCA, 5-Why, Fishbone and Bow-Tie.', 11, MUTED, False, 30))
+        fields = [('idate','Date'),('itime','Time'),('iloc','Location *'),('ipro','Project / Area'),('iact','Activity'),('ititle','Incident Title *')]
+        for a, h in fields:
+            setattr(self, a, I(h)); g.add_widget(getattr(self, a))
+        self.idate.text = today()
+        self.ic = Spinner(text='Near Miss', values=['Near Miss','First Aid','Medical Treatment','Lost Time Injury','Fatality','Property Damage','Environmental','Fire','Vehicle','Process Safety','Security','Other'], size_hint_y=None, height=44)
+        self.isv = Spinner(text='Medium', values=['Low','Medium','High','Critical'], size_hint_y=None, height=44)
+        g.add_widget(self.ic); g.add_widget(self.isv)
+        labels = [('ides','Detailed Incident Description',120),('icon','Actual Consequence',70),('ipot','Potential Consequence',70),('ipeo','Persons Involved / Roles',80),('iinj','Injury / Illness Details',80),('idam','Property / Equipment Damage',70),('ienv','Environmental Impact',70),('iwit','Witnesses / Statements',80),('iimm','Immediate Action / Containment',90),('ieve','Evidence / Photos / Documents / File References',80),('ilead','Investigation Leader',44),('iteam','Investigation Team',60),('iscope','Investigation Scope / Terms',80),('itimeL','Sequence / Timeline',110),('istat','Statements / Evidence Findings',100)]
+        for a, h, ht in labels:
+            setattr(self, a, I(h, ht, ht > 60)); g.add_widget(getattr(self, a))
+        g.add_widget(L('ICAM ANALYSIS', 13, RED, True, 28))
+        for a,h,ht in [('icam_event','Event / Incident',90),('icam_ind','Individual / Team Actions',90),('icam_task','Task / Environmental Conditions',90),('icam_org','Organisational Factors',90),('icam_def','Absent / Failed Defences and Barriers',100),('icam_act','ICAM Actions / Defence Improvements',100)]:
+            setattr(self,a,I(h,ht,True));g.add_widget(getattr(self,a))
+        g.add_widget(L('ROOT CAUSE ANALYSIS',13,PURPLE,True,28))
+        self.rcam=Spinner(text='5-Why',values=['5-Why','Fishbone / Ishikawa','Bow-Tie','ICAM','Root Cause Tree','Other'],size_hint_y=None,height=44);g.add_widget(self.rcam)
+        for a,h,ht in [('direct','Direct / Immediate Cause',80),('under','Underlying Cause',80),('root','Root Cause',100),('contrib','Contributing Factors',90),('why','5-Why Analysis',120),('fish','Fishbone: People / Method / Machine / Material / Environment / Management / Measurement',130),('bow','Bow-Tie: Threats / Top Event / Preventive Barriers / Consequences / Mitigating Barriers',130)]:
+            setattr(self,a,I(h,ht,True));g.add_widget(getattr(self,a))
+        g.add_widget(L('ACTION & CLOSEOUT',13,GREEN,True,28))
+        for a,h,ht in [('ca','Corrective Actions',100),('pa','Preventive Actions',100),('sys','System / Management Improvement',90),('resp','Responsible Person',44),('target','Target Date',44)]:
+            setattr(self,a,I(h,ht,ht>60));g.add_widget(getattr(self,a))
+        self.pri=Spinner(text='Medium',values=['Low','Medium','High','Critical'],size_hint_y=None,height=44);self.ist=Spinner(text='Open',values=['Open','Investigation','Action In Progress','Closed'],size_hint_y=None,height=44);g.add_widget(self.pri);g.add_widget(self.ist);self.ver=I('Verification / Effectiveness Check',90,True);self.close=I('Closeout Details',90,True);g.add_widget(self.ver);g.add_widget(self.close)
+        b=B('SAVE COMPLETE INVESTIGATION',RED,48);b.bind(on_release=lambda _:self.saveinc());g.add_widget(b);b=B('VIEW INCIDENT REGISTER',NAVY,42);b.bind(on_release=lambda _:self.view('incidents'));g.add_widget(b)
+        return self.page('Incident Investigation',s)
+
+    def saveinc(self):
+        if not self.iloc.text.strip() or not self.ititle.text.strip(): return msg('Required','Location and Incident Title are required.')
+        def v(a): return getattr(self,a).text
+        d={'date':v('idate'),'time':v('itime'),'location':v('iloc'),'project':v('ipro'),'activity':v('iact'),'classification':self.ic.text,'severity':self.isv.text,'title':v('ititle'),'description':v('ides'),'consequence':v('icon'),'potential_consequence':v('ipot'),'people':v('ipeo'),'injury':v('iinj'),'damage':v('idam'),'environment':v('ienv'),'witnesses':v('iwit'),'immediate':v('iimm'),'evidence':v('ieve'),'investigator':v('ilead'),'team':v('iteam'),'scope':v('iscope'),'timeline':v('itimeL'),'statements':v('istat'),'icam_event':v('icam_event'),'icam_individual':v('icam_ind'),'icam_task':v('icam_task'),'icam_org':v('icam_org'),'icam_defences':v('icam_def'),'icam_actions':v('icam_act'),'rca_method':self.rcam.text,'direct_cause':v('direct'),'underlying_cause':v('under'),'root_cause':v('root'),'contributing':v('contrib'),'five_whys':v('why'),'fishbone':v('fish'),'bowtie':v('bow'),'corrective':v('ca'),'preventive':v('pa'),'system_action':v('sys'),'responsible':v('resp'),'target':v('target'),'priority':self.pri.text,'status':self.ist.text,'verification':v('ver'),'closeout':v('close'),'created_at':now()}
+        try:
+            i=self.db.add('incidents',d);msg('Saved','Complete incident investigation #%d saved.'%i);self.refresh()
+        except Exception as e: msg('Save Error',str(e))
+
+    # ---------- Inspections ----------
+    def inspections(self):
+        s,g=self.form();g.add_widget(L('INSPECTION MANAGEMENT',16,NAVY,True,30));self.nd=I('Date');self.nd.text=today()
+        ws=[self.nd,I('Time'),I('Location *'),I('Inspection Type'),I('Inspector'),I('Activity / Work Area'),I('Checklist / Areas Checked',100,True),I('Unsafe Acts',80,True),I('Unsafe Conditions',80,True),I('Good Practices',80,True),I('PPE',65,True),I('Excavation',65,True),I('Work at Height',65,True),I('Lifting',65,True),I('Scaffolding',65,True),I('Electrical',65,True),I('Confined Space',65,True),I('Hot Work',65,True),I('Fire Safety',65,True),I('Housekeeping',65,True),I('Vehicle / Plant',65,True),I('Environmental',65,True),I('Emergency Preparedness',65,True),I('Findings',100,True),I('Actions Required',100,True),I('Responsible Person'),I('Target Date')]
+        self.nw=ws
+        for w in ws:g.add_widget(w)
+        self.ns=Spinner(text='Open',values=['Open','Closed'],size_hint_y=None,height=44);self.ne=I('Evidence / Photo / File Reference',70,True);g.add_widget(self.ns);g.add_widget(self.ne);b=B('SAVE INSPECTION',TEAL,46);b.bind(on_release=lambda _:self.saveinsp());g.add_widget(b);b=B('VIEW INSPECTIONS',NAVY,42);b.bind(on_release=lambda _:self.view('inspections'));g.add_widget(b);return self.page('Inspections',s)
+
+    def saveinsp(self):
+        w=self.nw;keys=['date','time','location','inspection_type','inspector','activity','checklist','unsafe_acts','unsafe_conditions','good_practices','ppe','excavation','wah','lifting','scaffolding','electrical','confined_space','hot_work','fire','housekeeping','vehicle','environment','emergency','findings','actions','responsible','target_date'];d={k:w[i].text for i,k in enumerate(keys)};d.update(status=self.ns.text,evidence=self.ne.text,created_at=now());
+        try:i=self.db.add('inspections',d);msg('Saved','Inspection #%d saved.'%i);self.refresh()
+        except Exception as e:msg('Save Error',str(e))
+
+    # ---------- Audits ----------
+    def audits(self):
+        s,g=self.form();g.add_widget(L('HSE AUDIT MANAGEMENT',16,NAVY,True,30));self.aw=[I('Date'),I('Location *'),I('Audit Type'),I('Auditor / Team'),I('Scope / Standard',80,True),I('Findings / Nonconformities',110,True),I('Good Practices / Strengths',80,True),I('Corrective Actions',100,True),I('Responsible Person'),I('Target Date')];self.aw[0].text=today()
+        for w in self.aw:g.add_widget(w)
+        self.ast=Spinner(text='Open',values=['Open','Closed'],size_hint_y=None,height=44);self.aev=I('Evidence / File Reference',70,True);g.add_widget(self.ast);g.add_widget(self.aev);b=B('SAVE AUDIT',GREEN,46);b.bind(on_release=lambda _:self.saveaudit());g.add_widget(b);b=B('VIEW AUDITS',NAVY,42);b.bind(on_release=lambda _:self.view('audits'));g.add_widget(b);return self.page('Audits',s)
+
+    def saveaudit(self):
+        keys=['date','location','audit_type','auditor','scope','findings','good_practices','actions','responsible','target'];d={k:self.aw[i].text for i,k in enumerate(keys)};d.update(status=self.ast.text,evidence=self.aev.text,created_at=now());
+        try:i=self.db.add('audits',d);msg('Saved','Audit #%d saved.'%i);self.refresh()
+        except Exception as e:msg('Save Error',str(e))
+
+    # ---------- CAPA ----------
+    def capa(self):
+        s,g=self.form();g.add_widget(L('CAPA MANAGEMENT',16,NAVY,True,30));self.cw=[I('Date'),I('Source'),I('Location'),I('Finding *',100,True),I('Root Cause',90,True),I('Corrective Action',100,True),I('Preventive Action',100,True),I('Responsible Person'),I('Target Date')];self.cw[0].text=today()
+        for w in self.cw:g.add_widget(w)
+        self.cp=Spinner(text='Medium',values=['Low','Medium','High','Critical'],size_hint_y=None,height=44);self.cs=Spinner(text='Open',values=['Open','In Progress','Closed','Overdue'],size_hint_y=None,height=44);self.cv=I('Verification / Effectiveness',80,True);self.cc=I('Closeout',80,True);self.ce=I('Closeout Evidence / File Reference',70,True);g.add_widget(self.cp);g.add_widget(self.cs);g.add_widget(self.cv);g.add_widget(self.cc);g.add_widget(self.ce);b=B('SAVE CAPA',PURPLE,46);b.bind(on_release=lambda _:self.savecapa());g.add_widget(b);b=B('VIEW CAPA',NAVY,42);b.bind(on_release=lambda _:self.view('capa'));g.add_widget(b);b=B('EXPORT CAPA CSV',TEAL,42);b.bind(on_release=lambda _:self.export('capa'));g.add_widget(b);return self.page('CAPA',s)
+
+    def savecapa(self):
+        if not self.cw[3].text.strip():return msg('Required','Finding is required.')
+        keys=['date','source','location','finding','root_cause','corrective','preventive','responsible','target'];d={k:self.cw[i].text for i,k in enumerate(keys)};d.update(priority=self.cp.text,status=self.cs.text,verification=self.cv.text,closeout=self.cc.text,evidence=self.ce.text,created_at=now());
+        try:i=self.db.add('capa',d);msg('Saved','CAPA #%d saved.'%i);self.refresh()
+        except Exception as e:msg('Save Error',str(e))
+
+    # ---------- Files ----------
+    def files(self):
+        s,g=self.form();g.add_widget(L('FILES & EVIDENCE',16,NAVY,True,30));self.fm=Spinner(text='Incident',values=['Observation','Incident','Inspection','Audit','CAPA'],size_hint_y=None,height=44);self.fr=I('Record ID *');self.fp=I('File path / photo / document reference *',75,True);self.fd=I('Description')
+        for w in [self.fm,self.fr,self.fp,self.fd]:g.add_widget(w)
+        b=B('SAVE FILE REFERENCE',ORANGE,46);b.bind(on_release=lambda _:self.savefile());g.add_widget(b);b=B('VIEW FILE REGISTER',NAVY,42);b.bind(on_release=lambda _:self.viewfiles());g.add_widget(b);return self.page('Files & Evidence',s)
+
+    def savefile(self):
+        try:i=int(self.fr.text.strip())
+        except:return msg('Invalid','Record ID must be a number.')
+        if not self.fp.text.strip():return msg('Required','File reference is required.')
+        try:self.db.add('files',{'module':self.fm.text,'record_id':i,'path':self.fp.text,'description':self.fd.text,'created_at':now()});msg('Saved','File reference saved.')
+        except Exception as e:msg('Save Error',str(e))
+
+    def viewfiles(self):
+        r=self.db.c.execute('select id,module,record_id,path,description,created_at from files order by id desc').fetchall();msg('FILE REGISTER','\n\n----------------\n\n'.join('ID: %s\nModule: %s\nRecord: %s\nFile: %s\nDescription: %s\n%s'%tuple(x) for x in r) if r else 'No file references.')
+
+    def view(self,t):
+        r=self.db.rows(t);msg(t.upper()+' REGISTER','\n\n----------------\n\n'.join('\n'.join('%s: %s'%(i+1,v if v not in (None,'') else '-') for i,v in enumerate(x)) for x in r) if r else 'No records found.')
+
+    def export(self,t):
+        r=self.db.rows(t)
+        if not r:return msg('Export','No records available.')
+        p=os.path.join(self.export_dir,t+'_register_'+datetime.now().strftime('%Y%m%d_%H%M%S')+'.csv')
+        with open(p,'w',newline='',encoding='utf-8-sig') as f:
+            csv.writer(f).writerows([list(x) for x in r])
+        self.request_save_file(p, os.path.basename(p), 'text/csv')
+
+    # ---------- Settings ----------
+    def settings(self):
+        s,g=self.form()
+        g.add_widget(L('APPLICATION SETTINGS',16,NAVY,True,30))
+        g.add_widget(L('Company and project information below is used automatically on exported reports and SOP Safety Observation Cards.',11,MUTED,False,55))
+        self.set_company=I('Company Name')
+        self.set_project=I('Project Name')
+        self.set_logo=I('Company Logo Path / Local File',70,True)
+        self.logo_preview=L('No logo selected',10,MUTED,False,50)
+        self.set_company.text=self.db.setting('company_name')
+        self.set_project.text=self.db.setting('project_name')
+        self.set_logo.text=self.db.setting('logo_path')
+        for w in [self.set_company,self.set_project,self.set_logo]:g.add_widget(w)
+        lb=B('SELECT COMPANY LOGO FROM GALLERY',TEAL,44,9)
+        lb.bind(on_release=lambda _: self.select_gallery_image(self.settings_logo_selected))
+        g.add_widget(lb);g.add_widget(self.logo_preview)
+        sb=B('SAVE SETTINGS',BLUE,46);sb.bind(on_release=lambda _:self.save_settings());g.add_widget(sb)
+        g.add_widget(L('SOP CARD HEADER',13,NAVY,True,30))
+        g.add_widget(L('The card does not contain the Medgulf logo or Medgulf project wording. It uses the logo, company name and project name saved here. If blank, those areas remain blank.',11,MUTED,False,75))
+        return self.page('Settings',s)
+
+    def settings_logo_selected(self, path):
+        self.set_logo.text = path or ''
+        self.logo_preview.text = os.path.basename(path) if path else 'No logo selected'
+        self.db.set_setting('logo_path', path or '')
+
+    def save_settings(self):
+        self.db.set_setting('company_name', self.set_company.text.strip())
+        self.db.set_setting('project_name', self.set_project.text.strip())
+        self.db.set_setting('logo_path', self.set_logo.text.strip())
+        msg('Settings Saved', 'Company, project and logo settings have been saved.\n\nNew exports and SOP cards will use these settings.')
+
+    def on_stop(self):
+        try:
+            if self._android_activity:
+                self._android_activity.unbind(on_activity_result=self.on_activity_result)
+        except Exception:
+            pass
+        self.db.c.close()
+
+
+if __name__ == '__main__':
+    AppHSE().run()
