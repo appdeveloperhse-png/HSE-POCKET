@@ -4,17 +4,15 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build HSE-POCKET APK
     runs-on: ubuntu-22.04
 
     env:
       DEBIAN_FRONTEND: noninteractive
-
       JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
 
       ANDROID_HOME: /home/runner/.buildozer/android/platform/android-sdk
@@ -24,24 +22,23 @@ jobs:
       ANDROIDAPI: "35"
       ANDROIDMINAPI: "24"
 
-      # FreeType workaround
       P4A_freetype_DIR: /home/runner/freetype-source
 
       GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4096m"
 
     steps:
 
-      # ------------------------------------------------------------
+      # ============================================================
       # CHECKOUT
-      # ------------------------------------------------------------
+      # ============================================================
 
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
 
-      # ------------------------------------------------------------
+      # ============================================================
       # PYTHON
-      # ------------------------------------------------------------
+      # ============================================================
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -49,9 +46,9 @@ jobs:
           python-version: "3.11"
 
 
-      # ------------------------------------------------------------
+      # ============================================================
       # JAVA
-      # ------------------------------------------------------------
+      # ============================================================
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -60,9 +57,9 @@ jobs:
           java-version: "17"
 
 
-      # ------------------------------------------------------------
+      # ============================================================
       # SYSTEM PACKAGES
-      # ------------------------------------------------------------
+      # ============================================================
 
       - name: Install system packages
         run: |
@@ -89,11 +86,11 @@ jobs:
             cmake
 
 
-      # ------------------------------------------------------------
+      # ============================================================
       # PYTHON BUILD TOOLS
-      # ------------------------------------------------------------
+      # ============================================================
 
-      - name: Install Buildozer and build dependencies
+      - name: Install Buildozer
         run: |
           set -euxo pipefail
 
@@ -104,44 +101,40 @@ jobs:
             "cython==0.29.34"
 
 
-      # ------------------------------------------------------------
-      # VERIFY APPLICATION FILES
-      # ------------------------------------------------------------
+      # ============================================================
+      # VERIFY APP BEFORE EXPENSIVE BUILD
+      # ============================================================
 
-      - name: Verify application files
+      - name: Validate application
         run: |
           set -euxo pipefail
 
-          echo "Repository:"
-          pwd
-
-          echo
-          echo "Files:"
-          find . -maxdepth 3 -type f \
-            ! -path './.git/*' \
-            | sort
-
-          echo
           echo "Checking main.py..."
 
           test -f main.py
+
           python -m py_compile main.py
 
-          echo
-          echo "main.py syntax OK"
+          echo "main.py syntax: OK"
 
           test -f buildozer.spec
 
           echo
-          echo "buildozer.spec:"
+          echo "Requirements:"
+          if [ -f requirements.txt ]; then
+            cat requirements.txt
+          fi
+
+          echo
+          echo "Buildozer specification:"
           cat buildozer.spec
 
 
-      # ------------------------------------------------------------
+      # ============================================================
       # FREE TYPE
-      # ------------------------------------------------------------
+      # ============================================================
 
-      - name: Prepare FreeType source
+      - name: Prepare FreeType
         run: |
           set -euxo pipefail
 
@@ -153,205 +146,109 @@ jobs:
             https://github.com/freetype/freetype.git \
             "$HOME/freetype-source"
 
-          test -f "$HOME/freetype-source/include/freetype/freetype.h"
+          test -f \
+            "$HOME/freetype-source/include/freetype/freetype.h"
 
-          echo
-          echo "FreeType source prepared:"
-          echo "$HOME/freetype-source"
-
-          echo
-          echo "FreeType version:"
-          grep -m1 "FREETYPE_MAJOR" \
-            "$HOME/freetype-source/include/freetype/freetype.h" || true
+          echo "FreeType source ready."
 
 
-      # ------------------------------------------------------------
+      # ============================================================
       # ANDROID SDK
-      # ------------------------------------------------------------
+      # ============================================================
 
       - name: Prepare Android SDK
         run: |
           set -euxo pipefail
 
           SYSTEM_SDK="/usr/local/lib/android/sdk"
-          PRIVATE_SDK="$HOME/.buildozer/android/platform/android-sdk"
-
-          mkdir -p "$HOME/.buildozer/android/platform"
-
-          rm -rf "$PRIVATE_SDK"
-
-          mkdir -p "$PRIVATE_SDK"
-
-          cp -a "$SYSTEM_SDK/." "$PRIVATE_SDK/"
-
-          echo
-          echo "Android SDK:"
-          echo "$PRIVATE_SDK"
-
-          test -d "$PRIVATE_SDK/platform-tools"
-          test -d "$PRIVATE_SDK/platforms/android-35"
-
-          echo
-          echo "Installed SDK platforms:"
-          find "$PRIVATE_SDK/platforms" \
-            -maxdepth 1 \
-            -mindepth 1 \
-            -type d \
-            | sort || true
-
-
-      # ------------------------------------------------------------
-      # ANDROID BUILD TOOLS
-      # ------------------------------------------------------------
-
-      - name: Verify Android Build Tools
-        run: |
-          set -euxo pipefail
-
           SDK="$HOME/.buildozer/android/platform/android-sdk"
 
+          rm -rf "$SDK"
+
+          mkdir -p "$SDK"
+
+          cp -a "$SYSTEM_SDK/." "$SDK/"
+
+          test -d "$SDK/platforms/android-35"
+
           echo
-          echo "Build Tools:"
+          echo "Android SDK prepared:"
+          echo "$SDK"
+
+          echo
+          echo "Available Build Tools:"
           find "$SDK/build-tools" \
             -maxdepth 1 \
             -mindepth 1 \
             -type d \
-            | sort
-
-          test -d "$SDK/build-tools/37.0.0"
-
-          test -x "$SDK/build-tools/37.0.0/aidl"
-
-          echo
-          echo "AIDL exists:"
-          ls -l "$SDK/build-tools/37.0.0/aidl"
+            | sort || true
 
 
-      # ------------------------------------------------------------
-      # ANDROID NDK 25b
-      # ------------------------------------------------------------
+      # ============================================================
+      # VERIFY AIDL
+      # ============================================================
 
-      - name: Prepare Android NDK 25b
+      - name: Verify AIDL
         run: |
           set -euxo pipefail
 
           SDK="$HOME/.buildozer/android/platform/android-sdk"
 
-          echo
-          echo "Available NDKs before cleanup:"
-          find "$SDK/ndk" \
-            -maxdepth 1 \
-            -mindepth 1 \
-            -type d \
-            | sort || true
+          AIDL=""
 
-          # Remove all NDKs copied from the GitHub runner SDK.
-          rm -rf "$SDK/ndk"
+          for version in \
+            37.0.0 \
+            36.0.0 \
+            35.0.0 \
+            34.0.0 \
+            33.0.2
+          do
+            if [ -x "$SDK/build-tools/$version/aidl" ]; then
+              AIDL="$SDK/build-tools/$version/aidl"
+              break
+            fi
+          done
 
-          mkdir -p "$SDK/ndk"
+          if [ -z "$AIDL" ]; then
+            echo "ERROR: No usable AIDL found."
 
-          # GitHub hosted runner contains Android NDK 25b.
-          SYSTEM_NDK="/usr/local/lib/android/sdk/ndk/25.1.8937393"
+            find "$SDK/build-tools" \
+              -type f \
+              -name aidl \
+              -print || true
 
-          if [ ! -d "$SYSTEM_NDK" ]; then
-            echo "ERROR: NDK 25.1.8937393 was not found."
-            echo
-            echo "Available system NDKs:"
-            find /usr/local/lib/android/sdk/ndk \
-              -maxdepth 1 \
-              -mindepth 1 \
-              -type d \
-              | sort || true
             exit 1
           fi
 
-          cp -a \
-            "$SYSTEM_NDK" \
-            "$SDK/ndk/25.1.8937393"
-
-          echo
-          echo "NDK installed:"
-          "$SDK/ndk/25.1.8937393/source.properties"
-
-          echo
-          echo "NDK directories:"
-          find "$SDK/ndk" \
-            -maxdepth 1 \
-            -mindepth 1 \
-            -type d \
-            | sort
+          echo "AIDL found:"
+          ls -l "$AIDL"
 
 
-      # ------------------------------------------------------------
-      # ANDROID ENVIRONMENT
-      # ------------------------------------------------------------
+      # ============================================================
+      # ACCEPT SDK LICENSES
+      # ============================================================
 
-      - name: Configure Android environment
-        run: |
-          set -euxo pipefail
-
-          SDK="$HOME/.buildozer/android/platform/android-sdk"
-          NDK="$SDK/ndk/25.1.8937393"
-
-          export ANDROID_HOME="$SDK"
-          export ANDROID_SDK_ROOT="$SDK"
-          export ANDROIDSDK="$SDK"
-
-          export ANDROID_NDK_HOME="$NDK"
-          export ANDROID_NDK_ROOT="$NDK"
-          export ANDROID_NDK="$NDK"
-          export ANDROIDNDK="$NDK"
-
-          export ANDROIDAPI="35"
-          export ANDROIDMINAPI="24"
-
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROIDSDK=$ANDROIDSDK" >> "$GITHUB_ENV"
-
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK=$ANDROID_NDK" >> "$GITHUB_ENV"
-          echo "ANDROIDNDK=$ANDROIDNDK" >> "$GITHUB_ENV"
-
-          echo "ANDROIDAPI=35" >> "$GITHUB_ENV"
-          echo "ANDROIDMINAPI=24" >> "$GITHUB_ENV"
-
-          echo "P4A_freetype_DIR=$HOME/freetype-source" >> "$GITHUB_ENV"
-
-          echo
-          echo "ANDROID_HOME=$SDK"
-          echo "ANDROID_NDK=$NDK"
-
-          echo
-          echo "NDK release:"
-          cat "$NDK/source.properties"
-
-
-      # ------------------------------------------------------------
-      # ACCEPT ANDROID LICENSES
-      # ------------------------------------------------------------
-
-      - name: Accept Android SDK licenses
+      - name: Accept Android licenses
         run: |
           set -euxo pipefail
 
           SDK="$HOME/.buildozer/android/platform/android-sdk"
 
-          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" \
-            --sdk_root="$SDK" \
-            --licenses \
-            >/dev/null || true
+          if [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+              --sdk_root="$SDK" \
+              --licenses \
+              >/dev/null || true
+          fi
 
-          echo
-          echo "Licenses accepted."
+          echo "Android licenses processed."
 
 
-      # ------------------------------------------------------------
-      # CLEAN PREVIOUS BUILDOZER STATE
-      # ------------------------------------------------------------
+      # ============================================================
+      # CLEAN BUILDOZER
+      # ============================================================
 
-      - name: Clean Buildozer state
+      - name: Clean Buildozer
         run: |
           set -euxo pipefail
 
@@ -360,22 +257,16 @@ jobs:
 
           mkdir -p bin
 
-          echo "Clean Buildozer state created."
+          echo "Buildozer cache cleared."
 
 
-      # ------------------------------------------------------------
-      # VERIFY PINNED P4A CONFIGURATION
-      # ------------------------------------------------------------
+      # ============================================================
+      # VERIFY TOOLCHAIN
+      # ============================================================
 
-      - name: Verify Buildozer configuration
+      - name: Verify toolchain
         run: |
           set -euxo pipefail
-
-          echo
-          echo "p4a settings from buildozer.spec:"
-          grep -E \
-            'p4a.branch|p4a.commit|android.ndk|android.api|android.minapi|android.archs|requirements' \
-            buildozer.spec
 
           echo
           echo "Python:"
@@ -389,10 +280,28 @@ jobs:
           echo "Buildozer:"
           buildozer --version
 
+          echo
+          echo "SDK:"
+          echo "$ANDROIDSDK"
 
-      # ------------------------------------------------------------
-      # BUILD APK
-      # ------------------------------------------------------------
+          echo
+          echo "API:"
+          echo "$ANDROIDAPI"
+
+          echo
+          echo "Minimum API:"
+          echo "$ANDROIDMINAPI"
+
+
+      # ============================================================
+      # BUILD
+      #
+      # IMPORTANT:
+      # buildozer.spec pins p4a to the stable 2024.01.21 release.
+      #
+      # We DO NOT manually copy an NDK here.
+      # p4a/buildozer handles its compatible NDK.
+      # ============================================================
 
       - name: Build APK
         run: |
@@ -402,30 +311,33 @@ jobs:
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
           export ANDROIDSDK="$ANDROID_HOME"
 
-          export ANDROID_NDK="$ANDROID_HOME/ndk/25.1.8937393"
-          export ANDROID_NDK_ROOT="$ANDROID_NDK"
-          export ANDROID_NDK_HOME="$ANDROID_NDK"
-          export ANDROIDNDK="$ANDROID_NDK"
-
           export ANDROIDAPI="35"
           export ANDROIDMINAPI="24"
 
           export P4A_freetype_DIR="$HOME/freetype-source"
 
           echo
-          echo "FINAL TOOLCHAIN"
-          echo "==============="
-          echo "SDK  : $ANDROID_HOME"
-          echo "NDK  : $ANDROID_NDK"
-          echo "API  : $ANDROIDAPI"
-          echo "MIN  : $ANDROIDMINAPI"
-          echo "ARCH : arm64-v8a"
-          echo "p4a  : 957a3e5"
-          echo "P4A FreeType: $P4A_freetype_DIR"
+          echo "======================================"
+          echo "HSE-POCKET ANDROID BUILD"
+          echo "======================================"
+
+          echo "Python:"
+          python --version
 
           echo
-          echo "NDK release:"
-          cat "$ANDROID_NDK/source.properties"
+          echo "Java:"
+          java -version
+
+          echo
+          echo "Buildozer:"
+          buildozer --version
+
+          echo
+          echo "Android API: $ANDROIDAPI"
+          echo "Minimum API: $ANDROIDMINAPI"
+          echo "Architecture: arm64-v8a"
+          echo "p4a: 2024.01.21"
+          echo "FreeType: $P4A_freetype_DIR"
 
           echo
           echo "Starting Buildozer..."
@@ -433,17 +345,18 @@ jobs:
           buildozer -v android debug
 
 
-      # ------------------------------------------------------------
-      # FIND APK
-      # ------------------------------------------------------------
+      # ============================================================
+      # VERIFY APK
+      # ============================================================
 
-      - name: Locate APK
+      - name: Verify APK
         if: success()
         run: |
           set -euxo pipefail
 
           echo
-          echo "APK files:"
+          echo "Searching for APK..."
+
           find . \
             -type f \
             -name "*.apk" \
@@ -452,100 +365,76 @@ jobs:
           APK="$(find bin -type f -name '*.apk' | head -n 1)"
 
           if [ -z "$APK" ]; then
-            echo "ERROR: APK was not created."
+            echo "ERROR: Build completed but no APK was found."
             exit 1
           fi
 
           echo
-          echo "APK found:"
-          echo "$APK"
+          echo "======================================"
+          echo "APK CREATED"
+          echo "======================================"
 
-          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          ls -lh "$APK"
+
+          file "$APK"
 
 
-      # ------------------------------------------------------------
+      # ============================================================
       # UPLOAD APK
-      # ------------------------------------------------------------
+      # ============================================================
 
-      - name: Upload APK artifact
+      - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: HSE-POCKET-debug-apk
+          name: HSE-POCKET-APK
           path: bin/*.apk
           if-no-files-found: error
 
 
-      # ------------------------------------------------------------
-      # FAILURE DIAGNOSTICS
-      # ------------------------------------------------------------
+      # ============================================================
+      # FAILURE INFORMATION
+      # ============================================================
 
-      - name: Collect failure diagnostics
+      - name: Failure diagnostics
         if: failure()
         run: |
           echo
-          echo "=========================================="
-          echo "BUILD FAILURE DIAGNOSTICS"
-          echo "=========================================="
+          echo "======================================"
+          echo "BUILD FAILED"
+          echo "======================================"
 
           echo
-          echo "Buildozer files:"
-          find .buildozer \
-            -maxdepth 4 \
-            -type f \
-            2>/dev/null \
-            | head -300 || true
-
-          echo
-          echo "Gradle wrappers:"
-          find .buildozer \
-            -type f \
-            -name "gradle-wrapper.properties" \
-            -print \
-            2>/dev/null || true
-
-          echo
-          echo "p4a version:"
-          if [ -f ".buildozer/android/platform/python-for-android/pythonforandroid/__init__.py" ]; then
-            grep -n "__version__" \
-              .buildozer/android/platform/python-for-android/pythonforandroid/__init__.py \
-              || true
-          fi
-
-          echo
-          echo "p4a git commit:"
-          if [ -d ".buildozer/android/platform/python-for-android/.git" ]; then
-            git \
-              -C .buildozer/android/platform/python-for-android \
+          echo "p4a checkout:"
+          if [ -d ".buildozer/android/platform/python-for-android" ]; then
+            git -C \
+              .buildozer/android/platform/python-for-android \
               rev-parse HEAD \
               || true
           fi
 
           echo
-          echo "Gradle versions found:"
+          echo "Gradle versions:"
           find .buildozer \
+            -name gradle-wrapper.properties \
             -type f \
-            -name "gradle-wrapper.properties" \
             -exec grep -H "distributionUrl" {} \; \
-            2>/dev/null \
-            || true
+            2>/dev/null || true
 
           echo
-          echo "NDK versions:"
+          echo "NDK locations:"
           find "$HOME/.buildozer/android/platform" \
-            -maxdepth 4 \
+            -maxdepth 5 \
             -type f \
-            -name "source.properties" \
+            -name source.properties \
             -print \
-            2>/dev/null \
-            | sort \
-            || true
+            2>/dev/null || true
 
           echo
-          echo "SDL2 locations:"
-          find .buildozer/android/platform/build-arm64-v8a \
-            -maxdepth 6 \
-            -iname "*SDL2*" \
+          echo "Recent Gradle errors:"
+          grep -RniE \
+            "BUILD FAILED|ERROR:|Exception|FAILED|Could not" \
+            .buildozer/android/platform/build-arm64-v8a \
             2>/dev/null \
-            | head -200 \
+            | tail -100 \
             || true
