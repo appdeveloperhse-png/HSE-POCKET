@@ -55,144 +55,39 @@ jobs:
       - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
-
           pip install buildozer==1.6.0
-
           pip install "Cython==0.29.34"
 
 
       # ============================================================
-      # 5. PREPARE BUILDОZER ANDROID SDK DIRECTORY
+      # 5. CHECK PROJECT
       # ============================================================
-      - name: Prepare Buildozer Android SDK
+      - name: Check project files
         run: |
-          mkdir -p "$ANDROIDSDK"
+          echo "Current directory:"
+          pwd
 
-          echo "Buildozer SDK path:"
-          echo "$ANDROIDSDK"
+          echo "Project files:"
+          find . -maxdepth 3 -type f | sort
 
-          echo "System SDK:"
-          ls -la /usr/local/lib/android/sdk
+          test -f main.py
+          test -f buildozer.spec
+          test -f requirements.txt
+
+          echo "Required project files found."
 
 
       # ============================================================
-      # 6. COPY GITHUB RUNNER ANDROID SDK
+      # 6. CHECK MAIN.PY
       # ============================================================
-      - name: Copy Android SDK
+      - name: Check main.py syntax
         run: |
-          cp -a /usr/local/lib/android/sdk/. "$ANDROIDSDK/"
-
-          echo "Android SDK copied."
-
-          echo "SDK contents:"
-          ls -la "$ANDROIDSDK"
+          python -m py_compile main.py
+          echo "main.py syntax OK."
 
 
       # ============================================================
-      # 7. FIX SDKMANAGER LOCATION FOR BUILDOZER
-      #
-      # Buildozer 1.6 expects:
-      #
-      # tools/bin/sdkmanager
-      #
-      # Modern GitHub runners normally provide:
-      #
-      # cmdline-tools/latest/bin/sdkmanager
-      #
-      # Create the expected path.
-      # ============================================================
-      - name: Prepare sdkmanager for Buildozer
-        run: |
-          mkdir -p "$ANDROIDSDK/tools/bin"
-
-          if [ -f "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" ]; then
-            ln -sf \
-              "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" \
-              "$ANDROIDSDK/tools/bin/sdkmanager"
-          fi
-
-          if [ ! -f "$ANDROIDSDK/tools/bin/sdkmanager" ]; then
-            echo "ERROR: sdkmanager was not found."
-            find "$ANDROIDSDK" -name sdkmanager -type f -print
-            exit 1
-          fi
-
-          echo "sdkmanager found:"
-          ls -l "$ANDROIDSDK/tools/bin/sdkmanager"
-
-
-      # ============================================================
-      # 8. ACCEPT ANDROID LICENSES
-      # ============================================================
-      - name: Accept Android SDK licenses
-        run: |
-          SDKMANAGER="$ANDROIDSDK/tools/bin/sdkmanager"
-
-          echo "Accepting Android SDK licenses..."
-
-          yes | "$SDKMANAGER" \
-            --sdk_root="$ANDROIDSDK" \
-            --licenses || true
-
-          echo "Licenses directory:"
-          find "$ANDROIDSDK/licenses" -maxdepth 1 -type f -print 2>/dev/null || true
-
-
-      # ============================================================
-      # 9. INSTALL REQUIRED SDK PACKAGES
-      # ============================================================
-      - name: Install Android SDK packages
-        run: |
-          SDKMANAGER="$ANDROIDSDK/tools/bin/sdkmanager"
-
-          echo "Installing required Android packages..."
-
-          "$SDKMANAGER" \
-            --sdk_root="$ANDROIDSDK" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;37.0.0"
-
-
-      # ============================================================
-      # 10. VERIFY BUILD TOOLS
-      #
-      # IMPORTANT:
-      # Do NOT use "aidl --version".
-      #
-      # This AIDL version prints help and exits with code 1.
-      # We only verify that the executable exists and can run.
-      # ============================================================
-      - name: Verify Android Build Tools
-        run: |
-          BUILD_TOOLS="$ANDROIDSDK/build-tools/37.0.0"
-          AIDL="$BUILD_TOOLS/aidl"
-
-          echo "Build Tools directory:"
-          ls -la "$BUILD_TOOLS"
-
-          if [ ! -f "$AIDL" ]; then
-            echo "ERROR: AIDL was not installed."
-            exit 1
-          fi
-
-          echo "AIDL executable found:"
-          ls -l "$AIDL"
-
-          echo "Testing AIDL..."
-
-          "$AIDL" --help > /tmp/aidl-help.txt || true
-
-          if [ ! -s /tmp/aidl-help.txt ]; then
-            echo "ERROR: AIDL did not execute."
-            exit 1
-          fi
-
-          echo "AIDL is installed and executable."
-
-
-      # ============================================================
-      # 11. PREPARE FREETYPE
+      # 7. PREPARE FREETYPE
       # ============================================================
       - name: Prepare FreeType
         run: |
@@ -204,96 +99,167 @@ jobs:
             https://github.com/freetype/freetype.git \
             "$HOME/freetype-source"
 
-          echo "FreeType source prepared."
-
           test -f "$HOME/freetype-source/CMakeLists.txt"
 
+          echo "FreeType source ready."
+
 
       # ============================================================
-      # 12. CHECK PROJECT FILES
+      # 8. PREPARE BUILDOZER SDK
       # ============================================================
-      - name: Check project files
+      - name: Prepare Android SDK
         run: |
-          echo "Current directory:"
-          pwd
+          mkdir -p "$ANDROIDSDK"
 
-          echo ""
-          echo "Project files:"
-          find . -maxdepth 3 -type f | sort
+          echo "System Android SDK:"
+          ls -la /usr/local/lib/android/sdk
 
-          echo ""
-          echo "Checking required files..."
+          echo "Copying Android SDK..."
 
-          test -f main.py
-          test -f buildozer.spec
-          test -f requirements.txt
+          cp -a /usr/local/lib/android/sdk/. "$ANDROIDSDK/"
 
-          echo "Required files found."
+          echo "Buildozer Android SDK:"
+          ls -la "$ANDROIDSDK"
 
 
       # ============================================================
-      # 13. CHECK PYTHON SYNTAX
+      # 9. PREPARE SDKMANAGER
       # ============================================================
-      - name: Check main.py syntax
+      - name: Prepare sdkmanager
         run: |
-          python -m py_compile main.py
+          mkdir -p "$ANDROIDSDK/tools/bin"
 
-          echo "main.py syntax check PASSED."
+          if [ -f "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            ln -sf \
+              "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" \
+              "$ANDROIDSDK/tools/bin/sdkmanager"
+          fi
+
+          if [ ! -f "$ANDROIDSDK/tools/bin/sdkmanager" ]; then
+            echo "ERROR: sdkmanager not found."
+
+            find "$ANDROIDSDK" \
+              -type f \
+              -name sdkmanager \
+              -print
+
+            exit 1
+          fi
+
+          echo "sdkmanager ready."
 
 
       # ============================================================
-      # 14. SHOW BUILDOZER CONFIGURATION
+      # 10. ACCEPT SDK LICENSES
       # ============================================================
-      - name: Show build configuration
+      - name: Accept Android SDK licenses
         run: |
-          echo "================================================"
-          echo "ANDROID SDK"
-          echo "================================================"
-          echo "$ANDROIDSDK"
+          SDKMANAGER="$ANDROIDSDK/tools/bin/sdkmanager"
 
-          echo ""
-          echo "ANDROID API:"
-          echo "$ANDROIDAPI"
+          echo "Accepting Android SDK licenses..."
 
-          echo ""
-          echo "ANDROID MIN API:"
-          echo "$ANDROIDMINAPI"
+          yes | "$SDKMANAGER" \
+            --sdk_root="$ANDROIDSDK" \
+            --licenses || true
 
-          echo ""
-          echo "FREETYPE:"
-          echo "$P4A_freetype_DIR"
+          echo "License acceptance completed."
 
-          echo ""
-          echo "BUILD TOOLS:"
-          ls -la "$ANDROIDSDK/build-tools/37.0.0"
+
+      # ============================================================
+      # 11. INSTALL REQUIRED SDK COMPONENTS
+      # ============================================================
+      - name: Install Android SDK components
+        run: |
+          SDKMANAGER="$ANDROIDSDK/tools/bin/sdkmanager"
+
+          echo "Installing Android SDK components..."
+
+          "$SDKMANAGER" \
+            --sdk_root="$ANDROIDSDK" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;37.0.0"
+
+          echo "Android SDK components installed."
+
+
+      # ============================================================
+      # 12. VERIFY AIDL FILE ONLY
+      #
+      # IMPORTANT:
+      # Do NOT run aidl --help.
+      # Do NOT run aidl --version.
+      # Both can return exit code 1 even though AIDL is present.
+      # ============================================================
+      - name: Verify AIDL
+        run: |
+          AIDL="$ANDROIDSDK/build-tools/37.0.0/aidl"
+
+          echo "Checking AIDL:"
+          echo "$AIDL"
+
+          if [ ! -f "$AIDL" ]; then
+            echo "ERROR: AIDL file does not exist."
+            exit 1
+          fi
+
+          if [ ! -x "$AIDL" ]; then
+            echo "ERROR: AIDL is not executable."
+            exit 1
+          fi
+
+          echo "AIDL exists and is executable."
+          ls -l "$AIDL"
+
+
+      # ============================================================
+      # 13. VERIFY BUILD TOOLS DIRECTORY
+      # ============================================================
+      - name: Verify Build Tools
+        run: |
+          BUILD_TOOLS="$ANDROIDSDK/build-tools/37.0.0"
+
+          if [ ! -d "$BUILD_TOOLS" ]; then
+            echo "ERROR: Build Tools directory does not exist."
+            exit 1
+          fi
+
+          echo "Build Tools:"
+          ls -la "$BUILD_TOOLS"
+
+          echo "Android SDK preparation PASSED."
+
+
+      # ============================================================
+      # 14. SHOW FINAL ENVIRONMENT
+      # ============================================================
+      - name: Show Android environment
+        run: |
+          echo "ANDROIDSDK=$ANDROIDSDK"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "ANDROIDAPI=$ANDROIDAPI"
+          echo "ANDROIDMINAPI=$ANDROIDMINAPI"
+          echo "P4A_freetype_DIR=$P4A_freetype_DIR"
 
           echo ""
           echo "AIDL:"
           ls -l "$ANDROIDSDK/build-tools/37.0.0/aidl"
 
-          echo ""
-          echo "BUILDОZER SPEC ANDROID SETTINGS:"
-          grep -E \
-            "android.sdk_path|android.api|android.minapi|android.ndk|android.accept_sdk_license|android.skip_update" \
-            buildozer.spec || true
-
 
       # ============================================================
-      # 15. CLEAN OLD BUILD
+      # 15. CLEAN BUILDOZER PROJECT BUILD FILES
       # ============================================================
-      - name: Clean previous Buildozer build
+      - name: Clean Buildozer project
         run: |
           rm -rf .buildozer
           rm -rf bin
 
-          echo "Old Buildozer build removed."
+          echo "Buildozer project build files cleaned."
 
 
       # ============================================================
       # 16. RECREATE SDK AFTER CLEAN
-      #
-      # Buildozer clean removes .buildozer.
-      # Therefore recreate the SDK and required files.
       # ============================================================
       - name: Restore Android SDK after clean
         run: |
@@ -309,11 +275,9 @@ jobs:
               "$ANDROIDSDK/tools/bin/sdkmanager"
           fi
 
-          echo "SDK restored after clean."
-
           test -f "$ANDROIDSDK/tools/bin/sdkmanager"
 
-          test -f "$ANDROIDSDK/build-tools/37.0.0/aidl"
+          echo "SDK restored."
 
 
       # ============================================================
@@ -330,7 +294,9 @@ jobs:
 
           export P4A_freetype_DIR="$HOME/freetype-source"
 
-          echo "Starting Buildozer..."
+          echo "=========================================="
+          echo "STARTING BUILDOZER APK BUILD"
+          echo "=========================================="
 
           buildozer -v android debug
 
@@ -338,7 +304,7 @@ jobs:
       # ============================================================
       # 18. FIND APK
       # ============================================================
-      - name: Find generated APK
+      - name: Find APK
         run: |
           echo "Searching for APK..."
 
@@ -347,10 +313,14 @@ jobs:
             -name "*.apk" \
             -print
 
-          if ! find bin -type f -name "*.apk" -print -quit | grep -q .; then
-            echo "ERROR: APK was not generated."
+          APK_COUNT=$(find bin -type f -name "*.apk" | wc -l)
+
+          if [ "$APK_COUNT" -eq 0 ]; then
+            echo "ERROR: No APK generated."
             exit 1
           fi
+
+          echo "APK generated successfully."
 
 
       # ============================================================
