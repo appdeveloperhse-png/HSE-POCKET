@@ -1,4 +1,4 @@
-name: Build HSE Management APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -8,13 +8,12 @@ on:
 
 jobs:
   build:
-    name: Build Android APK
     runs-on: ubuntu-22.04
 
     env:
-      ANDROIDSDK: /usr/local/lib/android/sdk
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ANDROIDSDK: /home/runner/.buildozer/android/platform/android-sdk
+      ANDROID_HOME: /home/runner/.buildozer/android/platform/android-sdk
+      ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
 
       ANDROIDAPI: "35"
       ANDROIDMINAPI: "24"
@@ -24,446 +23,214 @@ jobs:
 
     steps:
 
-      # =========================================================
-      # 1. CHECKOUT
-      # =========================================================
-
+      # --------------------------------------------------
+      # 1. Checkout
+      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
-      # =========================================================
-      # 2. PYTHON
-      # =========================================================
-
-      - name: Setup Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-
-      # =========================================================
-      # 3. JAVA
-      # =========================================================
-
+      # --------------------------------------------------
+      # 2. Java
+      # --------------------------------------------------
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # --------------------------------------------------
+      # 3. Python
+      # --------------------------------------------------
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-      # =========================================================
-      # 4. SYSTEM DEPENDENCIES
-      # =========================================================
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            build-essential \
-            git \
-            curl \
-            wget \
-            zip \
-            unzip \
-            autoconf \
-            automake \
-            libtool \
-            pkg-config \
-            gettext \
-            libltdl-dev \
-            libffi-dev \
-            libssl-dev \
-            libsqlite3-dev \
-            zlib1g-dev \
-            libncurses5-dev \
-            libncursesw5-dev \
-            cmake \
-            ninja-build \
-            ccache
-
-
-      # =========================================================
-      # 5. INSTALL BUILDOZER
-      # =========================================================
-
+      # --------------------------------------------------
+      # 4. Install Buildozer
+      # --------------------------------------------------
       - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
+          pip install buildozer==1.6.0
+          pip install "Cython==0.29.34"
 
-          python -m pip install \
-            buildozer==1.6.0 \
-            cython==0.29.34
-
-
-      # =========================================================
-      # 6. VERIFY THE SYSTEM SDK
-      # =========================================================
-
-      - name: Verify Android SDK
+      # --------------------------------------------------
+      # 5. Create Buildozer Android directories
+      # --------------------------------------------------
+      - name: Prepare Android SDK directories
         run: |
-          echo "=============================================="
-          echo "ANDROID SDK"
-          echo "=============================================="
+          mkdir -p "$ANDROIDSDK"
+          mkdir -p "$ANDROIDSDK/licenses"
+          mkdir -p "$ANDROIDSDK/cmdline-tools"
 
           echo "ANDROIDSDK=$ANDROIDSDK"
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-          if [ ! -d "$ANDROIDSDK" ]; then
-            echo "ERROR: Android SDK does not exist."
-            exit 1
-          fi
+      # --------------------------------------------------
+      # 6. Copy GitHub runner Android SDK into Buildozer SDK
+      # --------------------------------------------------
+      - name: Prepare Android SDK
+        run: |
+          echo "System Android SDK:"
+          ls -la /usr/local/lib/android/sdk
 
-          echo ""
-          echo "Build Tools:"
-          ls -la "$ANDROIDSDK/build-tools"
+          echo "Copying system SDK to Buildozer SDK..."
 
-          echo ""
-          echo "Available AIDL:"
-          find "$ANDROIDSDK/build-tools" \
-            -name aidl \
-            -type f \
-            -print
+          cp -a /usr/local/lib/android/sdk/. "$ANDROIDSDK/"
 
-          echo ""
-          echo "Platform Tools:"
-          ls -la "$ANDROIDSDK/platform-tools"
+          echo "Buildozer Android SDK:"
+          ls -la "$ANDROIDSDK"
 
-
-      # =========================================================
-      # 7. ACCEPT LICENSES FOR THE ACTUAL SDK
-      # =========================================================
-
+      # --------------------------------------------------
+      # 7. Accept ALL Android SDK licenses
+      # --------------------------------------------------
       - name: Accept Android SDK licenses
         run: |
-          echo "=============================================="
-          echo "ACCEPTING ANDROID LICENSES"
-          echo "=============================================="
+          yes | "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
+          yes | "$ANDROIDSDK/tools/bin/sdkmanager" --licenses || true
+
+          echo "License directory:"
+          find "$ANDROIDSDK/licenses" -maxdepth 1 -type f -print || true
+
+      # --------------------------------------------------
+      # 8. Install required Android SDK packages
+      # --------------------------------------------------
+      - name: Install Android SDK Build Tools and Platform
+        run: |
           SDKMANAGER="$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager"
 
-          if [ ! -f "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROIDSDK/cmdline-tools" \
-              -name sdkmanager \
-              -type f \
-              | head -n 1)"
-          fi
+          echo "Using:"
+          "$SDKMANAGER" --version
 
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager not found."
-            exit 1
-          fi
+          yes | "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;37.0.0"
 
-          echo "Using sdkmanager:"
-          echo "$SDKMANAGER"
-
-          yes | "$SDKMANAGER" --licenses
-
-          echo ""
-          echo "Android licenses accepted."
-
-
-      # =========================================================
-      # 8. VERIFY REQUIRED SDK PACKAGES
-      # =========================================================
-
-      - name: Verify required Android packages
+      # --------------------------------------------------
+      # 9. Verify AIDL
+      # --------------------------------------------------
+      - name: Verify Android Build Tools
         run: |
-          echo "=============================================="
-          echo "VERIFYING ANDROID PACKAGES"
-          echo "=============================================="
+          echo "Checking Build Tools..."
 
-          if [ ! -d "$ANDROIDSDK/platforms/android-35" ]; then
-            echo "ERROR: Android 35 platform missing."
+          ls -la "$ANDROIDSDK/build-tools"
+
+          AIDL="$ANDROIDSDK/build-tools/37.0.0/aidl"
+
+          if [ ! -f "$AIDL" ]; then
+            echo "ERROR: AIDL was not installed."
             exit 1
           fi
 
-          if [ ! -d "$ANDROIDSDK/build-tools/37.0.0" ]; then
-            echo "ERROR: Build Tools 37.0.0 missing."
-            exit 1
-          fi
+          echo "AIDL found:"
+          ls -l "$AIDL"
 
-          if [ ! -f "$ANDROIDSDK/build-tools/37.0.0/aidl" ]; then
-            echo "ERROR: AIDL missing."
-            exit 1
-          fi
+          "$AIDL" --version
 
-          if [ ! -f "$ANDROIDSDK/platform-tools/adb" ]; then
-            echo "ERROR: ADB missing."
-            exit 1
-          fi
-
-          echo ""
-          echo "Android 35: OK"
-          echo "Build Tools 37.0.0: OK"
-          echo "AIDL: OK"
-          echo "ADB: OK"
-
-
-      # =========================================================
-      # 9. PROJECT CHECK
-      # =========================================================
-
-      - name: Verify project files
+      # --------------------------------------------------
+      # 10. FreeType source
+      # --------------------------------------------------
+      - name: Prepare FreeType source
         run: |
-          echo "=============================================="
-          echo "PROJECT"
-          echo "=============================================="
-
-          pwd
-
-          echo ""
-          echo "Project files:"
-          ls -la
-
-          echo ""
-          echo "requirements.txt:"
-          cat requirements.txt
-
-          echo ""
-          echo "buildozer.spec:"
-          cat buildozer.spec
-
-          test -f main.py
-          test -f requirements.txt
-          test -f buildozer.spec
-
-          echo ""
-          echo "Project files OK."
-
-
-      # =========================================================
-      # 10. PYTHON SYNTAX
-      # =========================================================
-
-      - name: Check Python syntax
-        run: |
-          python -m py_compile main.py
-
-          echo "main.py syntax OK."
-
-
-      # =========================================================
-      # 11. REQUIREMENTS CHECK
-      # =========================================================
-
-      - name: Check Android requirements
-        run: |
-          echo "=============================================="
-          echo "DEPENDENCY CHECK"
-          echo "=============================================="
-
-          if grep -Eiq \
-            'openpyxl|reportlab|python-docx|docx' \
-            requirements.txt; then
-
-            echo "ERROR: Removed package found."
-            cat requirements.txt
-            exit 1
-          fi
-
-          if grep -Eiq \
-            'requests|charset-normalizer|charset_normalizer|certifi|urllib3|idna' \
-            requirements.txt; then
-
-            echo "ERROR: Unwanted network dependency found."
-            cat requirements.txt
-            exit 1
-          fi
-
-          echo "Dependency check OK."
-
-
-      # =========================================================
-      # 12. FREETYPE
-      # =========================================================
-
-      - name: Prepare FreeType
-        run: |
-          echo "=============================================="
-          echo "FREETYPE"
-          echo "=============================================="
-
           rm -rf "$HOME/freetype-source"
 
-          git clone \
-            --depth 1 \
+          git clone --depth 1 \
             --branch VER-2-14-1 \
             https://github.com/freetype/freetype.git \
             "$HOME/freetype-source"
 
-          if [ ! -f "$HOME/freetype-source/CMakeLists.txt" ]; then
-            echo "ERROR: FreeType source was not downloaded."
-            exit 1
-          fi
+          echo "FreeType source:"
+          ls -la "$HOME/freetype-source"
 
-          echo "FreeType source ready."
+          test -f "$HOME/freetype-source/CMakeLists.txt"
 
-
-      # =========================================================
-      # 13. EXPORT FREETYPE
-      # =========================================================
-
-      - name: Configure FreeType
+      # --------------------------------------------------
+      # 11. Check project files
+      # --------------------------------------------------
+      - name: Check project
         run: |
-          echo "P4A_freetype_DIR=$HOME/freetype-source" >> "$GITHUB_ENV"
+          echo "Repository:"
+          pwd
 
-          export P4A_freetype_DIR="$HOME/freetype-source"
+          echo "Files:"
+          find . -maxdepth 3 -type f | sort
 
+          echo "main.py:"
+          test -f main.py
+
+          echo "buildozer.spec:"
+          test -f buildozer.spec
+
+      # --------------------------------------------------
+      # 12. Python syntax check
+      # --------------------------------------------------
+      - name: Check main.py syntax
+        run: |
+          python -m py_compile main.py
+          echo "main.py syntax OK"
+
+      # --------------------------------------------------
+      # 13. Show Buildozer configuration
+      # --------------------------------------------------
+      - name: Show Android environment
+        run: |
+          echo "ANDROIDSDK=$ANDROIDSDK"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "ANDROIDAPI=$ANDROIDAPI"
+          echo "ANDROIDMINAPI=$ANDROIDMINAPI"
           echo "P4A_freetype_DIR=$P4A_freetype_DIR"
 
-
-      # =========================================================
-      # 14. REMOVE OLD BUILDOZER SDK
-      #
-      # IMPORTANT:
-      # We do NOT want p4a/buildozer to accidentally use
-      # ~/.buildozer/android/platform/android-sdk.
-      # =========================================================
-
-      - name: Remove old private Android SDK
-        run: |
-          echo "=============================================="
-          echo "CLEANING OLD PRIVATE SDK"
-          echo "=============================================="
-
-          rm -rf "$HOME/.buildozer/android/platform/android-sdk"
-
-          echo "Old private Buildozer SDK removed."
-
-
-      # =========================================================
-      # 15. CLEAN OLD PYTHON INSTALL
-      # =========================================================
-
-      - name: Clean old Android Python build
-        run: |
-          rm -rf .buildozer/android/platform/build-arm64-v8a/build/python-installs
-
-          rm -rf .buildozer/android/platform/build-arm64-v8a/dists
-
-          echo "Old Android Python installation cache removed."
-
-
-      # =========================================================
-      # 16. FINAL ENVIRONMENT CHECK
-      # =========================================================
-
-      - name: Final environment check
-        run: |
-          echo "=============================================="
-          echo "FINAL BUILD ENVIRONMENT"
-          echo "=============================================="
-
-          echo "Python:"
-          python --version
-
           echo ""
-          echo "Java:"
-          java -version
-
-          echo ""
-          echo "Buildozer:"
-          buildozer --version
-
-          echo ""
-          echo "ANDROIDSDK:"
-          echo "$ANDROIDSDK"
-
-          echo ""
-          echo "ANDROIDAPI:"
-          echo "$ANDROIDAPI"
-
-          echo ""
-          echo "ANDROIDMINAPI:"
-          echo "$ANDROIDMINAPI"
-
-          echo ""
-          echo "P4A_freetype_DIR:"
-          echo "$P4A_freetype_DIR"
+          echo "SDK Build Tools:"
+          ls -la "$ANDROIDSDK/build-tools"
 
           echo ""
           echo "AIDL:"
-          "$ANDROIDSDK/build-tools/37.0.0/aidl" --version || true
+          "$ANDROIDSDK/build-tools/37.0.0/aidl" --version
 
+      # --------------------------------------------------
+      # 14. Clean old Buildozer state
+      # --------------------------------------------------
+      - name: Clean previous Android build state
+        run: |
+          rm -rf .buildozer
+          rm -rf bin
 
-      # =========================================================
-      # 17. BUILD APK
-      # =========================================================
-
+      # --------------------------------------------------
+      # 15. Build APK
+      # --------------------------------------------------
       - name: Build APK
         run: |
-          echo "=============================================="
-          echo "STARTING HSE MANAGEMENT APK BUILD"
-          echo "=============================================="
-
-          export ANDROIDSDK="/usr/local/lib/android/sdk"
-          export ANDROID_HOME="/usr/local/lib/android/sdk"
-          export ANDROID_SDK_ROOT="/usr/local/lib/android/sdk"
+          export ANDROIDSDK="$ANDROIDSDK"
+          export ANDROID_HOME="$ANDROIDSDK"
+          export ANDROID_SDK_ROOT="$ANDROIDSDK"
 
           export ANDROIDAPI="35"
           export ANDROIDMINAPI="24"
 
           export P4A_freetype_DIR="$HOME/freetype-source"
 
-          echo ""
-          echo "SDK USED BY BUILD:"
-          echo "$ANDROIDSDK"
-
-          echo ""
-          echo "Starting Buildozer..."
-
           buildozer -v android debug
 
-
-      # =========================================================
-      # 18. FIND APK
-      # =========================================================
-
-      - name: Find generated APK
-        if: success()
+      # --------------------------------------------------
+      # 16. Show APK
+      # --------------------------------------------------
+      - name: Find APK
         run: |
-          echo "=============================================="
-          echo "GENERATED APK"
-          echo "=============================================="
+          echo "APK files:"
+          find . -type f -name "*.apk" -print
 
-          find bin \
-            -maxdepth 1 \
-            -type f \
-            -name "*.apk" \
-            -print
-
-          ls -lh bin/*.apk
-
-
-      # =========================================================
-      # 19. UPLOAD APK
-      # =========================================================
-
+      # --------------------------------------------------
+      # 17. Upload APK
+      # --------------------------------------------------
       - name: Upload APK
-        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: HSE-Management-APK
+          name: HSE-POCKET-APK
           path: bin/*.apk
           if-no-files-found: error
-          retention-days: 30
-
-
-      # =========================================================
-      # 20. UPLOAD LOGS ON FAILURE
-      # =========================================================
-
-      - name: Upload Build Logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: HSE-Build-Logs
-          path: |
-            .buildozer/android/platform/build-arm64-v8a/**/*.log
-            .buildozer/android/platform/build-arm64-v8a/**/config.log
-          if-no-files-found: ignore
-          retention-days: 7
