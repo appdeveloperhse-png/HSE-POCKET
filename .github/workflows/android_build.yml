@@ -11,57 +11,35 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
-      # ============================================================
-      # ANDROID SDK
-      # ============================================================
       ANDROIDSDK: /home/runner/.buildozer/android/platform/android-sdk
       ANDROID_HOME: /home/runner/.buildozer/android/platform/android-sdk
       ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
 
-      # ============================================================
-      # ANDROID
-      # ============================================================
       ANDROIDAPI: "35"
       ANDROIDMINAPI: "24"
 
-      # ============================================================
-      # NDK
-      #
-      # IMPORTANT:
-      # All NDK variables point to the SAME NDK.
-      # ============================================================
       ANDROIDNDK: /home/runner/.buildozer/android/platform/android-ndk-r28c
       ANDROID_NDK: /home/runner/.buildozer/android/platform/android-ndk-r28c
       ANDROID_NDK_ROOT: /home/runner/.buildozer/android/platform/android-ndk-r28c
       ANDROID_NDK_HOME: /home/runner/.buildozer/android/platform/android-ndk-r28c
 
-      # ============================================================
-      # FREETYPE
-      # ============================================================
       P4A_freetype_DIR: /home/runner/freetype-source
-
-      # ============================================================
-      # P4A PACKAGES
-      # ============================================================
       PACKAGES_PATH: /home/runner/.buildozer/android/packages
 
-      # ============================================================
-      # GRADLE
-      # ============================================================
       GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4096m"
 
     steps:
 
-      # ============================================================
+      # ==========================================================
       # 1. CHECKOUT
-      # ============================================================
-      - name: Checkout repository
+      # ==========================================================
+      - name: Checkout
         uses: actions/checkout@v4
 
 
-      # ============================================================
+      # ==========================================================
       # 2. JAVA 17
-      # ============================================================
+      # ==========================================================
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -69,18 +47,18 @@ jobs:
           java-version: "17"
 
 
-      # ============================================================
+      # ==========================================================
       # 3. PYTHON 3.11
-      # ============================================================
+      # ==========================================================
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
 
-      # ============================================================
-      # 4. INSTALL BUILDOZER
-      # ============================================================
+      # ==========================================================
+      # 4. BUILD DEPENDENCIES
+      # ==========================================================
       - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
@@ -89,50 +67,27 @@ jobs:
 
           pip install "Cython==0.29.34"
 
-          echo "Buildozer version:"
           buildozer --version
-
-          echo "Python version:"
           python --version
 
 
-      # ============================================================
+      # ==========================================================
       # 5. CHECK PROJECT
-      # ============================================================
-      - name: Check project files
+      # ==========================================================
+      - name: Check project
         run: |
-          echo "=========================================="
-          echo "PROJECT"
-          echo "=========================================="
-
-          pwd
-
-          echo ""
-
-          find . -maxdepth 3 -type f | sort
-
-          echo ""
-
           test -f main.py
           test -f buildozer.spec
           test -f requirements.txt
 
-          echo "Project files OK."
-
-
-      # ============================================================
-      # 6. PYTHON SYNTAX
-      # ============================================================
-      - name: Check main.py
-        run: |
           python -m py_compile main.py
 
-          echo "main.py syntax OK."
+          echo "Project check passed."
 
 
-      # ============================================================
-      # 7. PREPARE FREETYPE
-      # ============================================================
+      # ==========================================================
+      # 6. FREETYPE
+      # ==========================================================
       - name: Prepare FreeType
         run: |
           rm -rf "$HOME/freetype-source"
@@ -148,31 +103,50 @@ jobs:
           echo "FreeType ready."
 
 
-      # ============================================================
-      # 8. PREPARE BUILDOZER SDK
-      # ============================================================
+      # ==========================================================
+      # 7. PREPARE SDK
+      # ==========================================================
       - name: Prepare Android SDK
         run: |
+          rm -rf "$ANDROIDSDK"
+
           mkdir -p "$ANDROIDSDK"
-
-          echo "System SDK:"
-          ls -la /usr/local/lib/android/sdk
-
-          echo ""
-
-          echo "Copying system SDK..."
 
           cp -a /usr/local/lib/android/sdk/. "$ANDROIDSDK/"
 
-          echo ""
-
-          echo "Buildozer SDK:"
-          ls -la "$ANDROIDSDK"
+          echo "SDK copied."
 
 
-      # ============================================================
+      # ==========================================================
+      # 8. REMOVE ALL NDK VERSIONS FROM COPIED SDK
+      #
+      # This is important.
+      #
+      # The previous build selected:
+      # 25.1.8937393
+      #
+      # We do NOT want that.
+      # ==========================================================
+      - name: Remove conflicting NDKs
+        run: |
+          echo "NDK directories before cleanup:"
+
+          find "$ANDROIDSDK/ndk" \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d \
+            -print || true
+
+          rm -rf "$ANDROIDSDK/ndk"
+
+          mkdir -p "$ANDROIDSDK/ndk"
+
+          echo "All system NDKs removed."
+
+
+      # ==========================================================
       # 9. SDKMANAGER
-      # ============================================================
+      # ==========================================================
       - name: Prepare sdkmanager
         run: |
           mkdir -p "$ANDROIDSDK/tools/bin"
@@ -183,24 +157,15 @@ jobs:
               "$ANDROIDSDK/tools/bin/sdkmanager"
           fi
 
-          if [ ! -f "$ANDROIDSDK/tools/bin/sdkmanager" ]; then
-            echo "ERROR: sdkmanager not found."
-
-            find "$ANDROIDSDK" \
-              -type f \
-              -name sdkmanager \
-              -print
-
-            exit 1
-          fi
+          test -f "$ANDROIDSDK/tools/bin/sdkmanager"
 
           echo "sdkmanager ready."
 
 
-      # ============================================================
-      # 10. ACCEPT LICENSES
-      # ============================================================
-      - name: Accept Android SDK licenses
+      # ==========================================================
+      # 10. LICENSES
+      # ==========================================================
+      - name: Accept Android licenses
         run: |
           SDKMANAGER="$ANDROIDSDK/tools/bin/sdkmanager"
 
@@ -208,13 +173,13 @@ jobs:
             --sdk_root="$ANDROIDSDK" \
             --licenses || true
 
-          echo "Android licenses processed."
+          echo "Licenses processed."
 
 
-      # ============================================================
-      # 11. INSTALL SDK COMPONENTS
-      # ============================================================
-      - name: Install Android SDK components
+      # ==========================================================
+      # 11. ANDROID PLATFORM + BUILD TOOLS
+      # ==========================================================
+      - name: Install Android SDK packages
         run: |
           SDKMANAGER="$ANDROIDSDK/tools/bin/sdkmanager"
 
@@ -224,103 +189,40 @@ jobs:
             "platforms;android-35" \
             "build-tools;37.0.0"
 
-          echo "Android SDK components ready."
+          echo "SDK packages ready."
 
 
-      # ============================================================
-      # 12. VERIFY AIDL FILE
-      #
-      # DO NOT EXECUTE AIDL.
-      # Its --help/--version return code is not suitable
-      # as a health check.
-      # ============================================================
-      - name: Verify Android Build Tools
+      # ==========================================================
+      # 12. VERIFY SDK
+      # ==========================================================
+      - name: Verify SDK
         run: |
-          AIDL="$ANDROIDSDK/build-tools/37.0.0/aidl"
+          test -d "$ANDROIDSDK/platforms/android-35"
+          test -d "$ANDROIDSDK/build-tools/37.0.0"
+          test -f "$ANDROIDSDK/build-tools/37.0.0/aidl"
 
-          if [ ! -f "$AIDL" ]; then
-            echo "ERROR: AIDL not found."
-            exit 1
-          fi
-
-          if [ ! -x "$AIDL" ]; then
-            echo "ERROR: AIDL is not executable."
-            exit 1
-          fi
-
-          echo "AIDL exists:"
-          ls -l "$AIDL"
-
-          echo "Android Build Tools OK."
+          echo "SDK verification passed."
 
 
-      # ============================================================
-      # 13. CLEAN OLD BUILDOZER BUILD
-      # ============================================================
-      - name: Clean old Buildozer build
+      # ==========================================================
+      # 13. CLEAN BUILDOZER
+      # ==========================================================
+      - name: Clean Buildozer
         run: |
           rm -rf .buildozer
           rm -rf bin
 
-          echo "Old build removed."
+          echo "Buildozer cache cleaned."
 
 
-      # ============================================================
-      # 14. PREPARE ENVIRONMENT
-      # ============================================================
-      - name: Prepare final Android environment
-        run: |
-
-          # SDK
-          export ANDROIDSDK="$ANDROIDSDK"
-          export ANDROID_HOME="$ANDROIDSDK"
-          export ANDROID_SDK_ROOT="$ANDROIDSDK"
-
-          # NDK
-          export ANDROIDNDK="$ANDROIDNDK"
-          export ANDROID_NDK="$ANDROIDNDK"
-          export ANDROID_NDK_ROOT="$ANDROIDNDK"
-          export ANDROID_NDK_HOME="$ANDROIDNDK"
-
-          # Android API
-          export ANDROIDAPI="35"
-          export ANDROIDMINAPI="24"
-
-          # FreeType
-          export P4A_freetype_DIR="$HOME/freetype-source"
-
-          echo "=========================================="
-          echo "FINAL ANDROID ENVIRONMENT"
-          echo "=========================================="
-
-          echo "ANDROIDSDK=$ANDROIDSDK"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-
-          echo ""
-
-          echo "ANDROIDNDK=$ANDROIDNDK"
-          echo "ANDROID_NDK=$ANDROID_NDK"
-          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-
-          echo ""
-
-          echo "ANDROIDAPI=$ANDROIDAPI"
-          echo "ANDROIDMINAPI=$ANDROIDMINAPI"
-
-          echo ""
-
-          echo "P4A_freetype_DIR=$P4A_freetype_DIR"
-
-
-      # ============================================================
-      # 15. BUILD APK
+      # ==========================================================
+      # 14. BUILD
       #
-      # If Buildozer fails at Gradle, DON'T immediately stop.
-      # Run Gradle manually with --stacktrace so the real error
-      # appears in the GitHub Actions log.
-      # ============================================================
+      # Buildozer/p4a will install the NDK specified by:
+      #
+      # android.ndk = 28c
+      #
+      # ==========================================================
       - name: Build APK
         shell: bash
         run: |
@@ -331,112 +233,96 @@ jobs:
           export ANDROID_HOME="$ANDROIDSDK"
           export ANDROID_SDK_ROOT="$ANDROIDSDK"
 
-          export ANDROIDNDK="$ANDROIDNDK"
-          export ANDROID_NDK="$ANDROIDNDK"
-          export ANDROID_NDK_ROOT="$ANDROIDNDK"
-          export ANDROID_NDK_HOME="$ANDROIDNDK"
-
           export ANDROIDAPI="35"
           export ANDROIDMINAPI="24"
 
           export P4A_freetype_DIR="$HOME/freetype-source"
 
+          # Force Buildozer/p4a to use the requested NDK.
+          unset ANDROID_NDK
+          unset ANDROID_NDK_ROOT
+          unset ANDROID_NDK_HOME
+          unset ANDROIDNDK
+
           echo "=========================================="
-          echo "BUILDING APK"
+          echo "BUILD CONFIGURATION"
+          echo "=========================================="
+
+          echo "ANDROIDSDK=$ANDROIDSDK"
+          echo "ANDROIDAPI=$ANDROIDAPI"
+          echo "ANDROIDMINAPI=$ANDROIDMINAPI"
+
+          echo ""
+          echo "Buildozer will use:"
+          grep -E \
+            "android.api|android.minapi|android.ndk|android.archs|android.sdk_path" \
+            buildozer.spec
+
+          echo ""
+          echo "=========================================="
+          echo "START BUILDOZER"
           echo "=========================================="
 
           buildozer -v android debug
 
-          BUILD_RESULT=$?
+          RESULT=$?
 
-          if [ "$BUILD_RESULT" -eq 0 ]; then
+          if [ "$RESULT" -eq 0 ]; then
             echo ""
             echo "=========================================="
-            echo "BUILDOZER BUILD SUCCESSFUL"
+            echo "BUILD SUCCESSFUL"
             echo "=========================================="
             exit 0
           fi
 
           echo ""
           echo "=========================================="
-          echo "BUILDOZER FAILED"
+          echo "BUILD FAILED"
           echo "=========================================="
-
-          DIST_DIR=$(find .buildozer/android/platform \
-            -type f \
-            -name gradlew \
-            -path "*/dists/*/gradlew" \
-            -print \
-            -quit)
-
-          if [ -z "$DIST_DIR" ]; then
-            echo "Gradle wrapper was not found."
-            echo "Buildozer failed before Gradle project creation."
-            exit "$BUILD_RESULT"
-          fi
-
-          DIST_DIR=$(dirname "$DIST_DIR")
 
           echo ""
-          echo "=========================================="
-          echo "GRADLE PROJECT FOUND"
-          echo "=========================================="
+          echo "Searching for NDK actually used..."
 
-          echo "$DIST_DIR"
+          find .buildozer \
+            -type d \
+            -name "25.1.8937393" \
+            -print || true
 
-          cd "$DIST_DIR"
-
-          chmod +x gradlew 2>/dev/null || true
-
-          echo ""
-          echo "=========================================="
-          echo "ANDROID GRADLE DIAGNOSTIC"
-          echo "=========================================="
-
-          ./gradlew clean assembleDebug \
-            --stacktrace \
-            --info \
-            --no-daemon
-
-          GRADLE_RESULT=$?
+          find .buildozer \
+            -type d \
+            -name "*android-ndk*" \
+            -print || true
 
           echo ""
-          echo "=========================================="
-          echo "GRADLE EXIT CODE: $GRADLE_RESULT"
-          echo "=========================================="
+          echo "Searching for SDL2..."
 
-          exit "$GRADLE_RESULT"
+          find .buildozer \
+            -type d \
+            -iname "*SDL2*" \
+            -print || true
+
+          exit "$RESULT"
 
 
-      # ============================================================
-      # 16. FIND APK
-      # ============================================================
+      # ==========================================================
+      # 15. APK
+      # ==========================================================
       - name: Find APK
         if: success()
         run: |
-
-          echo "Searching for APK..."
-
-          find . \
+          find bin \
             -type f \
             -name "*.apk" \
             -print
 
-          if ! find bin \
-            -type f \
-            -name "*.apk" \
-            -print -quit | grep -q .; then
+          test -n "$(find bin -type f -name '*.apk' -print -quit)"
 
-            echo "ERROR: APK was not generated."
-            exit 1
-          fi
-
-          echo "APK found."
+          echo "APK generated."
 
 
-      # ============================================================
-      # 17. UPLOAD APK
-      # ============================================================
+      # ==========================================================
+      # 16. UPLOAD
+      # ==========================================================
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
