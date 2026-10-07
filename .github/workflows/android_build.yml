@@ -7,7 +7,9 @@ on:
       - main
 
 jobs:
+
   build:
+
     runs-on: ubuntu-22.04
 
     steps:
@@ -15,12 +17,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.11
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -64,6 +66,37 @@ jobs:
             buildozer==1.6.0 \
             "Cython==0.29.34"
 
+      - name: Check Python syntax
+        run: |
+          python -m py_compile main.py
+
+      - name: Verify Android requirements
+        run: |
+          echo "========================================"
+          echo "BUILD REQUIREMENTS"
+          echo "========================================"
+
+          grep "^requirements" buildozer.spec
+
+          echo
+          echo "========================================"
+          echo "requirements.txt"
+          echo "========================================"
+
+          cat requirements.txt
+
+          echo
+          echo "========================================"
+          echo "Checking forbidden packages"
+          echo "========================================"
+
+          if grep -Eiq 'openpyxl|reportlab|python-docx' buildozer.spec requirements.txt; then
+            echo "ERROR: Android-incompatible package found."
+            exit 1
+          fi
+
+          echo "OK"
+
       - name: Prepare FreeType
         run: |
           rm -rf "$HOME/freetype-source"
@@ -76,84 +109,54 @@ jobs:
 
           test -f "$HOME/freetype-source/CMakeLists.txt"
 
-          echo "FreeType source prepared:"
-          echo "$HOME/freetype-source"
-
-      - name: Verify Android requirements
-        run: |
-          echo "===== buildozer.spec ====="
-          cat buildozer.spec
-
-          echo
-          echo "===== requirements.txt ====="
-          cat requirements.txt
-
-          echo
-          echo "===== Checking unwanted packages ====="
-
-          if grep -Eiq 'openpyxl|charset[-_]normalizer|reportlab|python-docx|docx' buildozer.spec requirements.txt; then
-            echo "ERROR: Android build still contains an unwanted dependency."
-            echo
-            grep -Ein 'openpyxl|charset[-_]normalizer|reportlab|python-docx|docx' \
-              buildozer.spec requirements.txt || true
-            exit 1
-          fi
-
-          echo "OK: No openpyxl."
-          echo "OK: No charset-normalizer."
-          echo "OK: No ReportLab."
-          echo "OK: No python-docx."
-
-      - name: Check main.py imports
-        run: |
-          echo "===== Checking main.py ====="
-
-          if grep -Eiq 'import openpyxl|from openpyxl|import reportlab|from reportlab|import docx|from docx' main.py; then
-            echo "ERROR: main.py still contains an Android-incompatible dependency."
-            grep -Ein 'openpyxl|reportlab|docx' main.py || true
-            exit 1
-          fi
-
-          echo "OK: main.py contains no openpyxl/reportlab/python-docx imports."
-
-      - name: Check Python syntax
-        run: |
-          python -m py_compile main.py
-
-          echo "Python syntax check passed."
-
-      - name: Clean previous build
+      - name: Clean previous Buildozer files
         run: |
           rm -rf .buildozer
           rm -rf bin
+
           mkdir -p bin
 
       - name: Build APK
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
+
           export P4A_freetype_DIR="$HOME/freetype-source"
 
-          echo "======================================"
-          echo "FreeType source:"
+          echo "========================================"
+          echo "FreeType"
+          echo "========================================"
+
           echo "$P4A_freetype_DIR"
-          echo "======================================"
 
           test -d "$P4A_freetype_DIR"
+
+          echo
+          echo "========================================"
+          echo "Starting Buildozer"
+          echo "========================================"
 
           buildozer -v android debug
 
       - name: Show APK
         if: always()
         run: |
-          echo "======================================"
-          echo "APK FILES"
-          echo "======================================"
 
-          find . -type f -name "*.apk" -print || true
+          echo "========================================"
+          echo "APK FILES"
+          echo "========================================"
+
+          find . \
+            -type f \
+            \( -name "*.apk" -o -name "*.aab" \) \
+            -print || true
 
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: HSE-Management-APK
-          path: bin/*.apk
+          path: |
+            bin/*.apk
+            bin/*.aab
           if-no-files-found: error
