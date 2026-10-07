@@ -14,18 +14,14 @@ jobs:
     env:
       DEBIAN_FRONTEND: noninteractive
 
-      # Java
       JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
 
-      # Buildozer / Android
       ANDROID_HOME: /home/runner/.buildozer/android/platform/android-sdk
       ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
 
-      # Keep the API compatible with the pinned p4a release
       ANDROIDAPI: "34"
       ANDROIDMINAPI: "24"
 
-      # FreeType workaround
       P4A_freetype_DIR: /home/runner/freetype-source
 
     steps:
@@ -54,7 +50,7 @@ jobs:
           java-version: "17"
 
       # ============================================================
-      # 4. UBUNTU PACKAGES
+      # 4. SYSTEM DEPENDENCIES
       # ============================================================
       - name: Install system dependencies
         run: |
@@ -66,6 +62,7 @@ jobs:
             unzip \
             wget \
             curl \
+            rsync \
             build-essential \
             autoconf \
             automake \
@@ -91,7 +88,7 @@ jobs:
       # ============================================================
       # 5. PYTHON BUILD TOOLS
       # ============================================================
-      - name: Install Python build tools
+      - name: Install Buildozer and Cython
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
@@ -100,18 +97,17 @@ jobs:
             "cython==0.29.34"
 
       # ============================================================
-      # 6. VERIFY APPLICATION SOURCE
+      # 6. CHECK APP
       # ============================================================
-      - name: Check main.py syntax
+      - name: Check main.py
         run: |
           python -m py_compile main.py
-
-          echo "main.py syntax check passed."
+          echo "main.py syntax OK."
 
       # ============================================================
-      # 7. PREPARE FREETYPE SOURCE
+      # 7. FREETYPE
       # ============================================================
-      - name: Prepare FreeType source
+      - name: Prepare FreeType
         run: |
           rm -rf "$HOME/freetype-source"
 
@@ -123,8 +119,7 @@ jobs:
 
           test -f "$HOME/freetype-source/CMakeLists.txt"
 
-          echo "FreeType source:"
-          ls -la "$HOME/freetype-source"
+          echo "FreeType ready."
 
       # ============================================================
       # 8. PREPARE ANDROID SDK
@@ -138,48 +133,16 @@ jobs:
 
           mkdir -p "$SDK"
 
-          echo "System Android SDK locations:"
-          echo "--------------------------------"
+          echo "Copying GitHub runner Android SDK..."
 
-          if [ -d "/usr/local/lib/android/sdk" ]; then
-            find /usr/local/lib/android/sdk \
-              -maxdepth 2 \
-              -type d \
-              | head -100 || true
-          fi
+          rsync -a \
+            --exclude='ndk' \
+            --exclude='ndk-bundle' \
+            /usr/local/lib/android/sdk/ \
+            "$SDK/"
 
-          echo "--------------------------------"
-
-          # --------------------------------------------------------
-          # Copy the GitHub runner SDK into Buildozer's SDK location.
-          # Do NOT copy the NDK. p4a will install the correct NDK r25b.
-          # --------------------------------------------------------
-          if [ -d "/usr/local/lib/android/sdk" ]; then
-
-            rsync -a \
-              --exclude='ndk' \
-              --exclude='ndk-bundle' \
-              /usr/local/lib/android/sdk/ \
-              "$SDK/"
-
-          else
-            echo "ERROR: System Android SDK was not found."
-            exit 1
-          fi
-
-          # --------------------------------------------------------
-          # Modern Android SDK has:
-          #
-          # cmdline-tools/latest/bin/sdkmanager
-          #
-          # Old p4a 2024.01.21 expects:
-          #
-          # tools/bin/sdkmanager
-          #
-          # Create the compatibility path.
-          # --------------------------------------------------------
-
-          mkdir -p "$SDK/tools/bin"
+          echo
+          echo "Finding modern sdkmanager..."
 
           SYSTEM_SDKMANAGER=""
 
@@ -189,11 +152,9 @@ jobs:
           elif [ -x "/usr/local/lib/android/sdk/cmdline-tools/bin/sdkmanager" ]; then
             SYSTEM_SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/bin/sdkmanager"
 
-          elif [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SYSTEM_SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
-
           else
-            SYSTEM_SDKMANAGER="$(find /usr/local/lib/android/sdk/cmdline-tools \
+            SYSTEM_SDKMANAGER="$(find \
+              /usr/local/lib/android/sdk/cmdline-tools \
               -type f \
               -name sdkmanager \
               -executable \
@@ -202,9 +163,7 @@ jobs:
           fi
 
           if [ -z "$SYSTEM_SDKMANAGER" ]; then
-            echo "ERROR: Modern sdkmanager could not be found."
-            echo
-            echo "Searching runner:"
+            echo "ERROR: sdkmanager not found."
             find /usr/local/lib/android/sdk \
               -type f \
               -name sdkmanager \
@@ -212,36 +171,27 @@ jobs:
             exit 1
           fi
 
-          echo "Using sdkmanager:"
+          echo "Found:"
           echo "$SYSTEM_SDKMANAGER"
 
-          # --------------------------------------------------------
-          # Create the legacy path expected by p4a.
-          # --------------------------------------------------------
-          ln -sfn \
-            "$SYSTEM_SDKMANAGER" \
-            "$SDK/tools/bin/sdkmanager"
+          # Create legacy path required by p4a 2024.01.21
+          mkdir -p "$SDK/tools/bin"
 
-          # --------------------------------------------------------
-          # Also expose modern cmdline-tools inside the private SDK.
-          # --------------------------------------------------------
           if [ -d "/usr/local/lib/android/sdk/cmdline-tools" ]; then
             rm -rf "$SDK/cmdline-tools"
+
             cp -a \
               "/usr/local/lib/android/sdk/cmdline-tools" \
               "$SDK/cmdline-tools"
           fi
 
-          # Re-create legacy link after copying cmdline-tools.
-          mkdir -p "$SDK/tools/bin"
-
-          SYSTEM_SDKMANAGER_PRIVATE=""
+          PRIVATE_SDKMANAGER=""
 
           if [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SYSTEM_SDKMANAGER_PRIVATE="$SDK/cmdline-tools/latest/bin/sdkmanager"
-
+            PRIVATE_SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
           else
-            SYSTEM_SDKMANAGER_PRIVATE="$(find "$SDK/cmdline-tools" \
+            PRIVATE_SDKMANAGER="$(find \
+              "$SDK/cmdline-tools" \
               -type f \
               -name sdkmanager \
               -executable \
@@ -249,36 +199,32 @@ jobs:
               | head -1 || true)"
           fi
 
-          if [ -z "$SYSTEM_SDKMANAGER_PRIVATE" ]; then
-            echo "ERROR: sdkmanager was not copied into private SDK."
+          if [ -z "$PRIVATE_SDKMANAGER" ]; then
+            echo "ERROR: private sdkmanager not found."
             exit 1
           fi
 
           ln -sfn \
-            "$SYSTEM_SDKMANAGER_PRIVATE" \
+            "$PRIVATE_SDKMANAGER" \
             "$SDK/tools/bin/sdkmanager"
 
-          # --------------------------------------------------------
-          # Verify exactly the path p4a expects.
-          # Do NOT run sdkmanager --version here.
-          # --------------------------------------------------------
           echo
-          echo "Legacy sdkmanager path:"
+          echo "Legacy sdkmanager:"
           ls -l "$SDK/tools/bin/sdkmanager"
 
           test -e "$SDK/tools/bin/sdkmanager"
           test -x "$SDK/tools/bin/sdkmanager"
 
           echo
-          echo "SDK manager compatibility path is READY."
+          echo "SDK preparation complete."
 
       # ============================================================
-      # 9. ACCEPT ANDROID LICENSES
+      # 9. ACCEPT LICENSES
       # ============================================================
-      - name: Accept Android SDK licenses
+      - name: Accept Android licenses
         shell: bash
         run: |
-          set -euxo pipefail
+          set -e
 
           SDK="$HOME/.buildozer/android/platform/android-sdk"
 
@@ -289,15 +235,22 @@ jobs:
 
           test -e "$SDKMANAGER"
           test -x "$SDKMANAGER"
+
+          # pipefail intentionally disabled for this command.
+          # sdkmanager may close stdin after consuming the licenses,
+          # which causes yes to receive SIGPIPE.
+          set +o pipefail
 
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 
-          echo "Android licenses processed."
+          set -o pipefail
+
+          echo "Android licenses accepted."
 
       # ============================================================
-      # 10. INSTALL API 34 + BUILD TOOLS
+      # 10. INSTALL ANDROID PACKAGES
       # ============================================================
-      - name: Install required Android SDK packages
+      - name: Install Android SDK packages
         shell: bash
         run: |
           set -euxo pipefail
@@ -312,14 +265,25 @@ jobs:
           test -e "$SDKMANAGER"
           test -x "$SDKMANAGER"
 
-          yes | "$SDKMANAGER" \
+          echo "Installing Android SDK packages..."
+
+          # IMPORTANT:
+          # Do NOT use:
+          #
+          # yes | sdkmanager ...
+          #
+          # because pipefail makes yes/SIGPIPE fail the step.
+
+          "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-34" \
-            "build-tools;34.0.0" \
-            >/dev/null
+            "build-tools;34.0.0"
 
           echo
-          echo "Installed Android platforms:"
+          echo "Android packages installed."
+
+          echo
+          echo "Installed platforms:"
           find "$SDK/platforms" \
             -maxdepth 1 \
             -mindepth 1 \
@@ -334,33 +298,37 @@ jobs:
             -type d \
             2>/dev/null || true
 
+          test -d "$SDK/platforms/android-34"
+          test -d "$SDK/build-tools/34.0.0"
+
+          echo
+          echo "ANDROID SDK PREPARATION PASSED."
+
       # ============================================================
-      # 11. REMOVE OLD BUILD STATE
+      # 11. CLEAN BUILDOZER BUILD
       # ============================================================
-      - name: Clean old Buildozer state
+      - name: Clean Buildozer state
         run: |
           rm -rf .buildozer
           rm -rf bin
 
           mkdir -p bin
 
-          echo "Clean build directory prepared."
+          echo "Clean build state ready."
 
       # ============================================================
-      # 12. DISPLAY TOOLCHAIN
+      # 12. TOOLCHAIN PREFLIGHT
       # ============================================================
-      - name: Verify complete Android toolchain
+      - name: Verify toolchain
         shell: bash
         run: |
           set -euxo pipefail
 
           SDK="$HOME/.buildozer/android/platform/android-sdk"
 
-          export ANDROID_HOME="$SDK"
-          export ANDROID_SDK_ROOT="$SDK"
-
+          echo
           echo "======================================"
-          echo "HSE-POCKET ANDROID BUILD"
+          echo "HSE-POCKET TOOLCHAIN"
           echo "======================================"
 
           echo
@@ -384,27 +352,27 @@ jobs:
           echo "$SDK"
 
           echo
-          echo "Legacy sdkmanager:"
+          echo "sdkmanager:"
           ls -l "$SDK/tools/bin/sdkmanager"
 
           echo
-          echo "Platform:"
+          echo "Android API:"
           test -d "$SDK/platforms/android-34"
           echo "android-34 OK"
 
           echo
           echo "Build Tools:"
           test -d "$SDK/build-tools/34.0.0"
-          echo "build-tools 34.0.0 OK"
+          echo "34.0.0 OK"
 
           echo
           echo "FreeType:"
           test -f "$HOME/freetype-source/CMakeLists.txt"
-          echo "FreeType source OK"
+          echo "FreeType OK"
 
           echo
           echo "======================================"
-          echo "TOOLCHAIN PREFLIGHT PASSED"
+          echo "PREFLIGHT PASSED"
           echo "======================================"
 
       # ============================================================
@@ -412,8 +380,6 @@ jobs:
       # ============================================================
       - name: Build HSE-POCKET APK
         shell: bash
-        env:
-          P4A_freetype_DIR: /home/runner/freetype-source
         run: |
           set -euxo pipefail
 
@@ -428,21 +394,21 @@ jobs:
 
           echo
           echo "======================================"
-          echo "STARTING BUILDOZER"
+          echo "BUILDING HSE-POCKET APK"
           echo "======================================"
 
           buildozer -v android debug
 
       # ============================================================
-      # 14. FIND APK
+      # 14. COLLECT APK
       # ============================================================
-      - name: Locate APK
+      - name: Collect APK
         if: success()
         shell: bash
         run: |
           set -euxo pipefail
 
-          echo "APK files found:"
+          echo "Searching for APK..."
 
           find . \
             -type f \
@@ -455,7 +421,7 @@ jobs:
             | wc -l)
 
           if [ "$APK_COUNT" -eq 0 ]; then
-            echo "ERROR: No APK was produced."
+            echo "ERROR: APK was not produced."
             exit 1
           fi
 
@@ -467,13 +433,16 @@ jobs:
             -exec cp {} bin/ \;
 
           echo
-          echo "Final APK:"
+          echo "======================================"
+          echo "APK READY"
+          echo "======================================"
+
           ls -lh bin/*.apk
 
       # ============================================================
-      # 15. UPLOAD APK
+      # 15. UPLOAD APK ARTIFACT
       # ============================================================
-      - name: Upload HSE-POCKET APK
+      - name: Upload APK artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -485,13 +454,13 @@ jobs:
       # ============================================================
       # 16. FAILURE DIAGNOSTICS
       # ============================================================
-      - name: Collect build diagnostics
+      - name: Build diagnostics
         if: failure()
         shell: bash
         run: |
           echo
           echo "======================================"
-          echo "BUILD FAILED - DIAGNOSTICS"
+          echo "HSE-POCKET BUILD FAILED"
           echo "======================================"
 
           echo
@@ -504,16 +473,18 @@ jobs:
 
           echo
           echo "SDK:"
-          ls -la "$HOME/.buildozer/android/platform/" 2>/dev/null || true
-
-          echo
-          echo "SDK manager:"
           ls -la \
-            "$HOME/.buildozer/android/platform/android-sdk/tools/bin/" \
+            "$HOME/.buildozer/android/platform/android-sdk" \
             2>/dev/null || true
 
           echo
-          echo "Android platforms:"
+          echo "sdkmanager:"
+          ls -la \
+            "$HOME/.buildozer/android/platform/android-sdk/tools/bin" \
+            2>/dev/null || true
+
+          echo
+          echo "Platforms:"
           find \
             "$HOME/.buildozer/android/platform/android-sdk/platforms" \
             -maxdepth 1 \
@@ -522,7 +493,7 @@ jobs:
             2>/dev/null || true
 
           echo
-          echo "Build tools:"
+          echo "Build Tools:"
           find \
             "$HOME/.buildozer/android/platform/android-sdk/build-tools" \
             -maxdepth 1 \
@@ -548,6 +519,4 @@ jobs:
             2>/dev/null || true
 
           echo
-          echo "======================================"
-          echo "END DIAGNOSTICS"
           echo "======================================"
