@@ -13,7 +13,7 @@ version = 1.0.0
 orientation = portrait
 fullscreen = 0
 
-requirements = python3,kivy
+requirements = python3,kivy==2.3.1,requests==2.28.2,charset-normalizer==2.1.1,certifi==2022.12.7,idna==3.4,urllib3==1.26.14,filetype==1.2.0
 
 android.api = 35
 android.minapi = 24
@@ -28,6 +28,8 @@ android.permissions = android.permission.INTERNET
 android.private_storage = True
 
 android.logcat_filters = *:S python:D
+
+p4a.branch = master
 
 [buildozer]
 
