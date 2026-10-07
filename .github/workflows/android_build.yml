@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build HSE-POCKET APK
 
 on:
   workflow_dispatch:
@@ -23,187 +23,302 @@ jobs:
 
     steps:
 
-      # --------------------------------------------------
-      # 1. Checkout
-      # --------------------------------------------------
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # 2. Java
-      # --------------------------------------------------
+
+      # ============================================================
+      # 2. JAVA 17
+      # ============================================================
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # --------------------------------------------------
-      # 3. Python
-      # --------------------------------------------------
+
+      # ============================================================
+      # 3. PYTHON 3.11
+      # ============================================================
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # --------------------------------------------------
-      # 4. Install Buildozer
-      # --------------------------------------------------
+
+      # ============================================================
+      # 4. INSTALL BUILD DEPENDENCIES
+      # ============================================================
       - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
+
           pip install buildozer==1.6.0
+
           pip install "Cython==0.29.34"
 
-      # --------------------------------------------------
-      # 5. Create Buildozer Android directories
-      # --------------------------------------------------
-      - name: Prepare Android SDK directories
+
+      # ============================================================
+      # 5. PREPARE BUILDОZER ANDROID SDK DIRECTORY
+      # ============================================================
+      - name: Prepare Buildozer Android SDK
         run: |
           mkdir -p "$ANDROIDSDK"
-          mkdir -p "$ANDROIDSDK/licenses"
-          mkdir -p "$ANDROIDSDK/cmdline-tools"
 
-          echo "ANDROIDSDK=$ANDROIDSDK"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "Buildozer SDK path:"
+          echo "$ANDROIDSDK"
 
-      # --------------------------------------------------
-      # 6. Copy GitHub runner Android SDK into Buildozer SDK
-      # --------------------------------------------------
-      - name: Prepare Android SDK
-        run: |
-          echo "System Android SDK:"
+          echo "System SDK:"
           ls -la /usr/local/lib/android/sdk
 
-          echo "Copying system SDK to Buildozer SDK..."
 
+      # ============================================================
+      # 6. COPY GITHUB RUNNER ANDROID SDK
+      # ============================================================
+      - name: Copy Android SDK
+        run: |
           cp -a /usr/local/lib/android/sdk/. "$ANDROIDSDK/"
 
-          echo "Buildozer Android SDK:"
+          echo "Android SDK copied."
+
+          echo "SDK contents:"
           ls -la "$ANDROIDSDK"
 
-      # --------------------------------------------------
-      # 7. Accept ALL Android SDK licenses
-      # --------------------------------------------------
+
+      # ============================================================
+      # 7. FIX SDKMANAGER LOCATION FOR BUILDOZER
+      #
+      # Buildozer 1.6 expects:
+      #
+      # tools/bin/sdkmanager
+      #
+      # Modern GitHub runners normally provide:
+      #
+      # cmdline-tools/latest/bin/sdkmanager
+      #
+      # Create the expected path.
+      # ============================================================
+      - name: Prepare sdkmanager for Buildozer
+        run: |
+          mkdir -p "$ANDROIDSDK/tools/bin"
+
+          if [ -f "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            ln -sf \
+              "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" \
+              "$ANDROIDSDK/tools/bin/sdkmanager"
+          fi
+
+          if [ ! -f "$ANDROIDSDK/tools/bin/sdkmanager" ]; then
+            echo "ERROR: sdkmanager was not found."
+            find "$ANDROIDSDK" -name sdkmanager -type f -print
+            exit 1
+          fi
+
+          echo "sdkmanager found:"
+          ls -l "$ANDROIDSDK/tools/bin/sdkmanager"
+
+
+      # ============================================================
+      # 8. ACCEPT ANDROID LICENSES
+      # ============================================================
       - name: Accept Android SDK licenses
         run: |
-          yes | "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          SDKMANAGER="$ANDROIDSDK/tools/bin/sdkmanager"
 
-          yes | "$ANDROIDSDK/tools/bin/sdkmanager" --licenses || true
-
-          echo "License directory:"
-          find "$ANDROIDSDK/licenses" -maxdepth 1 -type f -print || true
-
-      # --------------------------------------------------
-      # 8. Install required Android SDK packages
-      # --------------------------------------------------
-      - name: Install Android SDK Build Tools and Platform
-        run: |
-          SDKMANAGER="$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager"
-
-          echo "Using:"
-          "$SDKMANAGER" --version
+          echo "Accepting Android SDK licenses..."
 
           yes | "$SDKMANAGER" \
+            --sdk_root="$ANDROIDSDK" \
+            --licenses || true
+
+          echo "Licenses directory:"
+          find "$ANDROIDSDK/licenses" -maxdepth 1 -type f -print 2>/dev/null || true
+
+
+      # ============================================================
+      # 9. INSTALL REQUIRED SDK PACKAGES
+      # ============================================================
+      - name: Install Android SDK packages
+        run: |
+          SDKMANAGER="$ANDROIDSDK/tools/bin/sdkmanager"
+
+          echo "Installing required Android packages..."
+
+          "$SDKMANAGER" \
+            --sdk_root="$ANDROIDSDK" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;37.0.0"
 
-      # --------------------------------------------------
-      # 9. Verify AIDL
-      # --------------------------------------------------
+
+      # ============================================================
+      # 10. VERIFY BUILD TOOLS
+      #
+      # IMPORTANT:
+      # Do NOT use "aidl --version".
+      #
+      # This AIDL version prints help and exits with code 1.
+      # We only verify that the executable exists and can run.
+      # ============================================================
       - name: Verify Android Build Tools
         run: |
-          echo "Checking Build Tools..."
+          BUILD_TOOLS="$ANDROIDSDK/build-tools/37.0.0"
+          AIDL="$BUILD_TOOLS/aidl"
 
-          ls -la "$ANDROIDSDK/build-tools"
-
-          AIDL="$ANDROIDSDK/build-tools/37.0.0/aidl"
+          echo "Build Tools directory:"
+          ls -la "$BUILD_TOOLS"
 
           if [ ! -f "$AIDL" ]; then
             echo "ERROR: AIDL was not installed."
             exit 1
           fi
 
-          echo "AIDL found:"
+          echo "AIDL executable found:"
           ls -l "$AIDL"
 
-          "$AIDL" --version
+          echo "Testing AIDL..."
 
-      # --------------------------------------------------
-      # 10. FreeType source
-      # --------------------------------------------------
-      - name: Prepare FreeType source
+          "$AIDL" --help > /tmp/aidl-help.txt || true
+
+          if [ ! -s /tmp/aidl-help.txt ]; then
+            echo "ERROR: AIDL did not execute."
+            exit 1
+          fi
+
+          echo "AIDL is installed and executable."
+
+
+      # ============================================================
+      # 11. PREPARE FREETYPE
+      # ============================================================
+      - name: Prepare FreeType
         run: |
           rm -rf "$HOME/freetype-source"
 
-          git clone --depth 1 \
+          git clone \
+            --depth 1 \
             --branch VER-2-14-1 \
             https://github.com/freetype/freetype.git \
             "$HOME/freetype-source"
 
-          echo "FreeType source:"
-          ls -la "$HOME/freetype-source"
+          echo "FreeType source prepared."
 
           test -f "$HOME/freetype-source/CMakeLists.txt"
 
-      # --------------------------------------------------
-      # 11. Check project files
-      # --------------------------------------------------
-      - name: Check project
+
+      # ============================================================
+      # 12. CHECK PROJECT FILES
+      # ============================================================
+      - name: Check project files
         run: |
-          echo "Repository:"
+          echo "Current directory:"
           pwd
 
-          echo "Files:"
+          echo ""
+          echo "Project files:"
           find . -maxdepth 3 -type f | sort
 
-          echo "main.py:"
+          echo ""
+          echo "Checking required files..."
+
           test -f main.py
-
-          echo "buildozer.spec:"
           test -f buildozer.spec
+          test -f requirements.txt
 
-      # --------------------------------------------------
-      # 12. Python syntax check
-      # --------------------------------------------------
+          echo "Required files found."
+
+
+      # ============================================================
+      # 13. CHECK PYTHON SYNTAX
+      # ============================================================
       - name: Check main.py syntax
         run: |
           python -m py_compile main.py
-          echo "main.py syntax OK"
 
-      # --------------------------------------------------
-      # 13. Show Buildozer configuration
-      # --------------------------------------------------
-      - name: Show Android environment
+          echo "main.py syntax check PASSED."
+
+
+      # ============================================================
+      # 14. SHOW BUILDOZER CONFIGURATION
+      # ============================================================
+      - name: Show build configuration
         run: |
-          echo "ANDROIDSDK=$ANDROIDSDK"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          echo "ANDROIDAPI=$ANDROIDAPI"
-          echo "ANDROIDMINAPI=$ANDROIDMINAPI"
-          echo "P4A_freetype_DIR=$P4A_freetype_DIR"
+          echo "================================================"
+          echo "ANDROID SDK"
+          echo "================================================"
+          echo "$ANDROIDSDK"
 
           echo ""
-          echo "SDK Build Tools:"
-          ls -la "$ANDROIDSDK/build-tools"
+          echo "ANDROID API:"
+          echo "$ANDROIDAPI"
+
+          echo ""
+          echo "ANDROID MIN API:"
+          echo "$ANDROIDMINAPI"
+
+          echo ""
+          echo "FREETYPE:"
+          echo "$P4A_freetype_DIR"
+
+          echo ""
+          echo "BUILD TOOLS:"
+          ls -la "$ANDROIDSDK/build-tools/37.0.0"
 
           echo ""
           echo "AIDL:"
-          "$ANDROIDSDK/build-tools/37.0.0/aidl" --version
+          ls -l "$ANDROIDSDK/build-tools/37.0.0/aidl"
 
-      # --------------------------------------------------
-      # 14. Clean old Buildozer state
-      # --------------------------------------------------
-      - name: Clean previous Android build state
+          echo ""
+          echo "BUILDОZER SPEC ANDROID SETTINGS:"
+          grep -E \
+            "android.sdk_path|android.api|android.minapi|android.ndk|android.accept_sdk_license|android.skip_update" \
+            buildozer.spec || true
+
+
+      # ============================================================
+      # 15. CLEAN OLD BUILD
+      # ============================================================
+      - name: Clean previous Buildozer build
         run: |
           rm -rf .buildozer
           rm -rf bin
 
-      # --------------------------------------------------
-      # 15. Build APK
-      # --------------------------------------------------
+          echo "Old Buildozer build removed."
+
+
+      # ============================================================
+      # 16. RECREATE SDK AFTER CLEAN
+      #
+      # Buildozer clean removes .buildozer.
+      # Therefore recreate the SDK and required files.
+      # ============================================================
+      - name: Restore Android SDK after clean
+        run: |
+          mkdir -p "$ANDROIDSDK"
+
+          cp -a /usr/local/lib/android/sdk/. "$ANDROIDSDK/"
+
+          mkdir -p "$ANDROIDSDK/tools/bin"
+
+          if [ -f "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            ln -sf \
+              "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" \
+              "$ANDROIDSDK/tools/bin/sdkmanager"
+          fi
+
+          echo "SDK restored after clean."
+
+          test -f "$ANDROIDSDK/tools/bin/sdkmanager"
+
+          test -f "$ANDROIDSDK/build-tools/37.0.0/aidl"
+
+
+      # ============================================================
+      # 17. BUILD APK
+      # ============================================================
       - name: Build APK
         run: |
           export ANDROIDSDK="$ANDROIDSDK"
@@ -215,19 +330,32 @@ jobs:
 
           export P4A_freetype_DIR="$HOME/freetype-source"
 
+          echo "Starting Buildozer..."
+
           buildozer -v android debug
 
-      # --------------------------------------------------
-      # 16. Show APK
-      # --------------------------------------------------
-      - name: Find APK
-        run: |
-          echo "APK files:"
-          find . -type f -name "*.apk" -print
 
-      # --------------------------------------------------
-      # 17. Upload APK
-      # --------------------------------------------------
+      # ============================================================
+      # 18. FIND APK
+      # ============================================================
+      - name: Find generated APK
+        run: |
+          echo "Searching for APK..."
+
+          find . \
+            -type f \
+            -name "*.apk" \
+            -print
+
+          if ! find bin -type f -name "*.apk" -print -quit | grep -q .; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+
+      # ============================================================
+      # 19. UPLOAD APK
+      # ============================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
