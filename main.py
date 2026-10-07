@@ -14,8 +14,7 @@ from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
 from kivy.uix.spinner import Spinner
 from kivy.uix.popup import Popup
-from kivy.uix.tabbedpanel import TabbedPanel
-from kivy.uix.tabbedpanel import TabbedPanelItem
+from kivy.uix.screenmanager import ScreenManager, Screen
 
 
 APP_NAME = "HSE Management System"
@@ -58,22 +57,17 @@ def make_label(text="", size=14, bold=False, height=40):
     )
 
     widget.bind(
-        width=lambda instance, value:
-        setattr(
+        width=lambda instance, value: setattr(
             instance,
             "text_size",
-            (value, None),
+            (max(0, value - dp(5)), None),
         )
     )
 
     return widget
 
 
-def make_input(
-    hint="",
-    multiline=False,
-    height=45,
-):
+def make_input(hint="", multiline=False, height=45):
     return TextInput(
         hint_text=hint,
         multiline=multiline,
@@ -83,8 +77,16 @@ def make_input(
     )
 
 
-def show_message(title, message):
+def make_button(text, height=50):
+    return Button(
+        text=text,
+        size_hint_y=None,
+        height=dp(height),
+        font_size=dp(14),
+    )
 
+
+def show_message(title, message):
     outer = BoxLayout(
         orientation="vertical",
         spacing=dp(10),
@@ -102,11 +104,10 @@ def show_message(title, message):
     )
 
     label.bind(
-        width=lambda instance, value:
-        setattr(
+        width=lambda instance, value: setattr(
             instance,
             "text_size",
-            (value - dp(15), None),
+            (max(0, value - dp(15)), None),
         )
     )
 
@@ -131,7 +132,7 @@ def show_message(title, message):
     popup = Popup(
         title=title,
         content=outer,
-        size_hint=(0.92, 0.75),
+        size_hint=(0.92, 0.78),
         auto_dismiss=False,
     )
 
@@ -147,7 +148,6 @@ def show_message(title, message):
 # ============================================================
 
 def rtf_escape(value):
-
     text = str(value or "")
 
     text = text.replace("\\", "\\\\")
@@ -157,69 +157,53 @@ def rtf_escape(value):
     result = []
 
     for char in text:
-
         number = ord(char)
 
         if number > 127:
-
             if number > 32767:
                 number -= 65536
 
-            result.append(
-                "\\u{}?".format(number)
-            )
-
+            result.append("\\u{}?".format(number))
         else:
             result.append(char)
 
     return "".join(result)
 
 
-def create_rtf_file(
-    filename,
-    title,
-    sections,
-):
-
+def create_rtf_file(filename, title, sections):
     lines = [
         r"{\rtf1\ansi\deff0",
         r"{\fonttbl{\f0 Arial;}}",
-        r"\fs28\b " +
-        rtf_escape(title) +
-        r"\b0\par",
+        r"\fs28\b " + rtf_escape(title) + r"\b0\par",
         r"\fs20",
     ]
 
     for heading, value in sections:
-
         lines.append(
-            r"\b " +
-            rtf_escape(heading) +
-            r":\b0 " +
-            rtf_escape(value) +
-            r"\par"
+            r"\b "
+            + rtf_escape(heading)
+            + r":\b0 "
+            + rtf_escape(value)
+            + r"\par"
         )
 
     lines.append("}")
 
-    with open(
-        filename,
-        "w",
-        encoding="utf-8",
-    ) as file:
-
-        file.write(
-            "\n".join(lines)
-        )
+    with open(filename, "w", encoding="utf-8") as file:
+        file.write("\n".join(lines))
 
 
 # ============================================================
-# PURE PYTHON PDF EXPORT
+# SIMPLE PURE PYTHON PDF EXPORT
 # ============================================================
 
 def pdf_escape(value):
-
     text = str(value or "")
+
+    text = text.encode(
+        "latin-1",
+        errors="replace",
+    ).decode("latin-1")
 
     text = text.replace("\\", "\\\\")
     text = text.replace("(", "\\(")
@@ -228,12 +212,7 @@ def pdf_escape(value):
     return text
 
 
-def create_pdf_file(
-    filename,
-    title,
-    sections,
-):
-
+def create_pdf_file(filename, title, sections):
     page_width = 595
     page_height = 842
 
@@ -241,12 +220,9 @@ def create_pdf_file(
     font_size = 10
     line_height = 15
 
-    lines = []
-
-    lines.append(str(title))
+    lines = [str(title)]
 
     for heading, value in sections:
-
         value = str(value or "")
 
         wrapped = textwrap.wrap(
@@ -262,38 +238,26 @@ def create_pdf_file(
         first = True
 
         for part in wrapped:
-
             if first:
-
                 lines.append(
                     "{}: {}".format(
                         heading,
                         part,
                     )
                 )
-
                 first = False
-
             else:
-
                 lines.append(
                     "    {}".format(part)
                 )
 
     max_lines = 48
-
     pages = []
-
     current_page = []
 
     for line in lines:
-
         if len(current_page) >= max_lines:
-
-            pages.append(
-                current_page
-            )
-
+            pages.append(current_page)
             current_page = []
 
         current_page.append(line)
@@ -304,33 +268,21 @@ def create_pdf_file(
     if not pages:
         pages = [[""]]
 
-    # --------------------------------------------------------
-    # PDF OBJECTS
-    # --------------------------------------------------------
-
     objects = []
 
-    # 1 - Catalog
+    # Object 1 - Catalog
     objects.append(
         "<< /Type /Catalog /Pages 2 0 R >>"
     )
 
-    # Page object numbers.
-    # Each page uses two objects:
-    # page object + content object.
     page_object_ids = []
-
     next_object_id = 3
 
     for _ in pages:
-
-        page_object_ids.append(
-            next_object_id
-        )
-
+        page_object_ids.append(next_object_id)
         next_object_id += 2
 
-    # 2 - Pages
+    # Object 2 - Pages
     kids = " ".join(
         "{} 0 R".format(object_id)
         for object_id in page_object_ids
@@ -352,44 +304,24 @@ def create_pdf_file(
         "/BaseFont /Helvetica >>"
     )
 
-    # --------------------------------------------------------
-    # PAGE OBJECTS
-    # --------------------------------------------------------
-
+    # Page objects
     for index, page_lines in enumerate(pages):
-
         page_object_id = page_object_ids[index]
         content_object_id = page_object_id + 1
 
-        commands = []
-
-        commands.append(
-            "BT"
-        )
-
-        commands.append(
-            "/F1 {} Tf".format(
-                font_size
-            )
-        )
-
-        commands.append(
+        commands = [
+            "BT",
+            "/F1 {} Tf".format(font_size),
             "1 0 0 1 {} {} Tm".format(
                 margin,
                 page_height - margin,
-            )
-        )
+            ),
+        ]
 
-        for line_index, line in enumerate(
-            page_lines
-        ):
-
+        for line_index, line in enumerate(page_lines):
             if line_index > 0:
-
                 commands.append(
-                    "0 -{} Td".format(
-                        line_height
-                    )
+                    "0 -{} Td".format(line_height)
                 )
 
             commands.append(
@@ -398,9 +330,7 @@ def create_pdf_file(
                 )
             )
 
-        commands.append(
-            "ET"
-        )
+        commands.append("ET")
 
         stream = "\n".join(commands)
 
@@ -434,38 +364,18 @@ def create_pdf_file(
             stream,
         )
 
-        objects.append(
-            page_object
-        )
-
-        objects.append(
-            content_object
-        )
-
-    # --------------------------------------------------------
-    # BUILD PDF
-    # --------------------------------------------------------
+        objects.append(page_object)
+        objects.append(content_object)
 
     pdf = bytearray()
 
-    pdf.extend(
-        b"%PDF-1.4\n"
-    )
-
-    pdf.extend(
-        b"%\xe2\xe3\xcf\xd3\n"
-    )
+    pdf.extend(b"%PDF-1.4\n")
+    pdf.extend(b"%\xe2\xe3\xcf\xd3\n")
 
     offsets = [0]
 
-    for object_number, obj in enumerate(
-        objects,
-        start=1,
-    ):
-
-        offsets.append(
-            len(pdf)
-        )
+    for object_number, obj in enumerate(objects, start=1):
+        offsets.append(len(pdf))
 
         pdf.extend(
             "{} 0 obj\n".format(
@@ -480,9 +390,7 @@ def create_pdf_file(
             )
         )
 
-        pdf.extend(
-            b"\nendobj\n"
-        )
+        pdf.extend(b"\nendobj\n")
 
     xref_position = len(pdf)
 
@@ -497,7 +405,6 @@ def create_pdf_file(
     )
 
     for offset in offsets[1:]:
-
         pdf.extend(
             "{:010d} 00000 n \n".format(
                 offset
@@ -515,18 +422,11 @@ def create_pdf_file(
         xref_position,
     )
 
-    # IMPORTANT:
-    # Encode the complete trailer separately.
-    # This avoids the syntax error from the previous version.
     pdf.extend(
         trailer.encode("ascii")
     )
 
-    with open(
-        filename,
-        "wb",
-    ) as file:
-
+    with open(filename, "wb") as file:
         file.write(pdf)
 
 
@@ -537,7 +437,6 @@ def create_pdf_file(
 class Database:
 
     def __init__(self, database_path):
-
         self.database_path = database_path
 
         self.connection = sqlite3.connect(
@@ -547,7 +446,6 @@ class Database:
         self.create_tables()
 
     def create_tables(self):
-
         cursor = self.connection.cursor()
 
         cursor.execute(
@@ -566,6 +464,7 @@ class Database:
                 observed_by TEXT,
                 observed_by_designation TEXT,
                 observed_by_id TEXT,
+                evidence TEXT,
                 created_at TEXT
             )
             """
@@ -622,10 +521,18 @@ class Database:
             """
         )
 
+        # Add evidence column to an older database
+        try:
+            cursor.execute(
+                "ALTER TABLE observations "
+                "ADD COLUMN evidence TEXT"
+            )
+        except sqlite3.OperationalError:
+            pass
+
         self.connection.commit()
 
     def add_observation(self, data):
-
         cursor = self.connection.cursor()
 
         cursor.execute(
@@ -643,9 +550,10 @@ class Database:
                 observed_by,
                 observed_by_designation,
                 observed_by_id,
+                evidence,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["date"],
@@ -660,6 +568,7 @@ class Database:
                 data["observed_by"],
                 data["observed_by_designation"],
                 data["observed_by_id"],
+                data["evidence"],
                 current_datetime(),
             ),
         )
@@ -669,7 +578,6 @@ class Database:
         return cursor.lastrowid
 
     def add_incident(self, data):
-
         cursor = self.connection.cursor()
 
         cursor.execute(
@@ -705,7 +613,6 @@ class Database:
         return cursor.lastrowid
 
     def add_audit(self, data):
-
         cursor = self.connection.cursor()
 
         cursor.execute(
@@ -739,7 +646,6 @@ class Database:
         return cursor.lastrowid
 
     def add_capa(self, data):
-
         cursor = self.connection.cursor()
 
         cursor.execute(
@@ -777,7 +683,6 @@ class Database:
         return cursor.lastrowid
 
     def count(self, table):
-
         allowed = {
             "observations",
             "incidents",
@@ -791,17 +696,112 @@ class Database:
         cursor = self.connection.cursor()
 
         cursor.execute(
-            "SELECT COUNT(*) FROM {}".format(
-                table
-            )
+            "SELECT COUNT(*) FROM {}".format(table)
         )
 
         row = cursor.fetchone()
 
         return row[0] if row else 0
 
-    def get_capa(self):
+    def count_where(self, table, field, value):
+        allowed_tables = {
+            "observations",
+            "incidents",
+            "audits",
+            "capa",
+        }
 
+        allowed_fields = {
+            "status",
+        }
+
+        if table not in allowed_tables:
+            return 0
+
+        if field not in allowed_fields:
+            return 0
+
+        cursor = self.connection.cursor()
+
+        cursor.execute(
+            "SELECT COUNT(*) FROM {} WHERE {} = ?".format(
+                table,
+                field,
+            ),
+            (value,),
+        )
+
+        row = cursor.fetchone()
+
+        return row[0] if row else 0
+
+    def get_observations(self):
+        cursor = self.connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                date,
+                location,
+                observation_type,
+                observation,
+                corrective_action,
+                status,
+                hse_category,
+                observed_by,
+                evidence
+            FROM observations
+            ORDER BY id DESC
+            """
+        )
+
+        return cursor.fetchall()
+
+    def get_incidents(self):
+        cursor = self.connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                date,
+                location,
+                incident_type,
+                description,
+                immediate_action,
+                root_cause,
+                corrective_action,
+                status
+            FROM incidents
+            ORDER BY id DESC
+            """
+        )
+
+        return cursor.fetchall()
+
+    def get_audits(self):
+        cursor = self.connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                date,
+                location,
+                audit_type,
+                auditor,
+                findings,
+                corrective_action,
+                status
+            FROM audits
+            ORDER BY id DESC
+            """
+        )
+
+        return cursor.fetchall()
+
+    def get_capa(self):
         cursor = self.connection.cursor()
 
         cursor.execute(
@@ -824,31 +824,7 @@ class Database:
 
         return cursor.fetchall()
 
-    def get_observations(self):
-
-        cursor = self.connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT
-                id,
-                date,
-                location,
-                observation_type,
-                observation,
-                corrective_action,
-                status,
-                hse_category,
-                observed_by
-            FROM observations
-            ORDER BY id DESC
-            """
-        )
-
-        return cursor.fetchall()
-
     def close(self):
-
         try:
             self.connection.close()
         except Exception:
@@ -862,7 +838,6 @@ class Database:
 class HSEManagementApp(App):
 
     def build(self):
-
         self.title = APP_NAME
 
         self.app_folder = os.path.join(
@@ -880,129 +855,215 @@ class HSEManagementApp(App):
             "hse_management.db",
         )
 
-        self.db = Database(
-            database_path
+        self.db = Database(database_path)
+
+        # ----------------------------------------------------
+        # SCREEN MANAGER
+        # ----------------------------------------------------
+
+        self.sm = ScreenManager()
+
+        self.dashboard_screen = Screen(
+            name="dashboard"
         )
 
-        panel = TabbedPanel(
-            do_default_tab=False,
-            tab_width=dp(115),
+        self.observation_screen = Screen(
+            name="observations"
         )
 
-        dashboard_tab = TabbedPanelItem(
-            text="Dashboard"
+        self.incident_screen = Screen(
+            name="incidents"
         )
 
-        observation_tab = TabbedPanelItem(
-            text="Observations"
+        self.audit_screen = Screen(
+            name="audits"
         )
 
-        incident_tab = TabbedPanelItem(
-            text="Incidents"
+        self.capa_screen = Screen(
+            name="capa"
         )
 
-        audit_tab = TabbedPanelItem(
-            text="Audits"
-        )
+        # ----------------------------------------------------
+        # BUILD SCREENS
+        # ----------------------------------------------------
 
-        capa_tab = TabbedPanelItem(
-            text="CAPA"
-        )
-
-        dashboard_tab.add_widget(
+        self.dashboard_screen.add_widget(
             self.build_dashboard()
         )
 
-        observation_tab.add_widget(
+        self.observation_screen.add_widget(
             self.build_observations()
         )
 
-        incident_tab.add_widget(
+        self.incident_screen.add_widget(
             self.build_incidents()
         )
 
-        audit_tab.add_widget(
+        self.audit_screen.add_widget(
             self.build_audits()
         )
 
-        capa_tab.add_widget(
+        self.capa_screen.add_widget(
             self.build_capa()
         )
 
-        panel.add_widget(
-            dashboard_tab
+        self.sm.add_widget(
+            self.dashboard_screen
         )
 
-        panel.add_widget(
-            observation_tab
+        self.sm.add_widget(
+            self.observation_screen
         )
 
-        panel.add_widget(
-            incident_tab
+        self.sm.add_widget(
+            self.incident_screen
         )
 
-        panel.add_widget(
-            audit_tab
+        self.sm.add_widget(
+            self.audit_screen
         )
 
-        panel.add_widget(
-            capa_tab
+        self.sm.add_widget(
+            self.capa_screen
         )
 
-        self.panel = panel
+        return self.sm
 
-        return panel
+    # ========================================================
+    # NAVIGATION
+    # ========================================================
+
+    def go_to(self, screen_name):
+        if self.sm.has_screen(screen_name):
+            self.sm.current = screen_name
+
+            if screen_name == "dashboard":
+                self.refresh_dashboard()
+
+    def make_navigation(self):
+        nav = BoxLayout(
+            orientation="horizontal",
+            size_hint_y=None,
+            height=dp(58),
+            spacing=dp(2),
+            padding=[dp(2), dp(3)],
+        )
+
+        buttons = [
+            ("Dashboard", "dashboard"),
+            ("Observations", "observations"),
+            ("Incidents", "incidents"),
+            ("Audits", "audits"),
+            ("CAPA", "capa"),
+        ]
+
+        for text, screen_name in buttons:
+            button = Button(
+                text=text,
+                font_size=dp(11),
+                size_hint_x=1,
+            )
+
+            button.bind(
+                on_release=lambda instance,
+                name=screen_name: self.go_to(name)
+            )
+
+            nav.add_widget(button)
+
+        return nav
+
+    def make_screen_layout(
+        self,
+        title,
+        content,
+    ):
+        root = BoxLayout(
+            orientation="vertical",
+        )
+
+        # Top title bar
+        header = BoxLayout(
+            orientation="vertical",
+            size_hint_y=None,
+            height=dp(65),
+            padding=[
+                dp(12),
+                dp(5),
+            ],
+        )
+
+        header.add_widget(
+            make_label(
+                title,
+                size=19,
+                bold=True,
+                height=55,
+            )
+        )
+
+        root.add_widget(header)
+
+        # Main content
+        root.add_widget(content)
+
+        # Always-visible navigation
+        root.add_widget(
+            self.make_navigation()
+        )
+
+        return root
 
     # ========================================================
     # DASHBOARD
     # ========================================================
 
     def build_dashboard(self):
-
-        root = BoxLayout(
+        content = BoxLayout(
             orientation="vertical",
-            padding=dp(15),
+            padding=dp(12),
             spacing=dp(10),
         )
 
-        root.add_widget(
+        content.add_widget(
             make_label(
                 "HSE MANAGEMENT SYSTEM",
-                size=22,
+                size=21,
                 bold=True,
-                height=60,
+                height=45,
             )
         )
 
-        root.add_widget(
+        content.add_widget(
             make_label(
-                "HSE Dashboard",
-                size=16,
-                height=40,
+                "Live HSE Dashboard",
+                size=15,
+                height=35,
             )
         )
 
         self.dashboard_grid = GridLayout(
             cols=2,
-            spacing=dp(10),
+            spacing=dp(8),
             size_hint_y=None,
         )
 
         self.dashboard_grid.bind(
             minimum_height=
-            self.dashboard_grid.setter(
-                "height"
-            )
+            self.dashboard_grid.setter("height")
         )
 
-        root.add_widget(
+        scroll = ScrollView()
+
+        scroll.add_widget(
             self.dashboard_grid
         )
 
-        refresh = Button(
-            text="Refresh Dashboard",
-            size_hint_y=None,
-            height=dp(50),
+        content.add_widget(scroll)
+
+        refresh = make_button(
+            "REFRESH DASHBOARD",
+            52,
         )
 
         refresh.bind(
@@ -1010,24 +1071,14 @@ class HSEManagementApp(App):
             self.refresh_dashboard()
         )
 
-        root.add_widget(refresh)
+        content.add_widget(refresh)
 
-        root.add_widget(
-            make_label(
-                "Use the tabs to record HSE "
-                "observations, incidents, audits "
-                "and corrective actions.",
-                size=14,
-                height=70,
-            )
+        return self.make_screen_layout(
+            "Dashboard",
+            content,
         )
 
-        self.refresh_dashboard()
-
-        return root
-
     def refresh_dashboard(self):
-
         if not hasattr(
             self,
             "dashboard_grid",
@@ -1036,52 +1087,132 @@ class HSEManagementApp(App):
 
         self.dashboard_grid.clear_widgets()
 
-        data = [
+        observation_count = self.db.count(
+            "observations"
+        )
+
+        incident_count = self.db.count(
+            "incidents"
+        )
+
+        audit_count = self.db.count(
+            "audits"
+        )
+
+        capa_count = self.db.count(
+            "capa"
+        )
+
+        observation_open = self.db.count_where(
+            "observations",
+            "status",
+            "Open",
+        )
+
+        observation_closed = self.db.count_where(
+            "observations",
+            "status",
+            "Closed",
+        )
+
+        incident_open = self.db.count_where(
+            "incidents",
+            "status",
+            "Open",
+        )
+
+        incident_closed = self.db.count_where(
+            "incidents",
+            "status",
+            "Closed",
+        )
+
+        audit_open = self.db.count_where(
+            "audits",
+            "status",
+            "Open",
+        )
+
+        audit_closed = self.db.count_where(
+            "audits",
+            "status",
+            "Closed",
+        )
+
+        capa_open = self.db.count_where(
+            "capa",
+            "status",
+            "Open",
+        )
+
+        capa_closed = self.db.count_where(
+            "capa",
+            "status",
+            "Closed",
+        )
+
+        cards = [
             (
-                "Observations",
-                self.db.count(
-                    "observations"
+                "OBSERVATIONS",
+                observation_count,
+                "Open: {}\nClosed: {}".format(
+                    observation_open,
+                    observation_closed,
                 ),
+                "observations",
             ),
             (
-                "Incidents",
-                self.db.count(
-                    "incidents"
+                "INCIDENTS",
+                incident_count,
+                "Open: {}\nClosed: {}".format(
+                    incident_open,
+                    incident_closed,
                 ),
+                "incidents",
             ),
             (
-                "Audits",
-                self.db.count(
-                    "audits"
+                "AUDITS",
+                audit_count,
+                "Open: {}\nClosed: {}".format(
+                    audit_open,
+                    audit_closed,
                 ),
+                "audits",
             ),
             (
                 "CAPA",
-                self.db.count(
-                    "capa"
+                capa_count,
+                "Open: {}\nClosed: {}".format(
+                    capa_open,
+                    capa_closed,
                 ),
+                "capa",
             ),
         ]
 
-        for title, number in data:
-
-            box = BoxLayout(
-                orientation="vertical",
+        for title, number, detail, screen_name in cards:
+            button = Button(
                 size_hint_y=None,
-                height=dp(100),
-                padding=dp(8),
+                height=dp(145),
+                background_normal="",
             )
 
-            box.add_widget(
+            layout = BoxLayout(
+                orientation="vertical",
+                padding=dp(8),
+                spacing=dp(2),
+            )
+
+            layout.add_widget(
                 make_label(
                     title,
-                    size=16,
+                    size=15,
                     bold=True,
-                    height=40,
+                    height=35,
                 )
             )
 
-            box.add_widget(
+            layout.add_widget(
                 make_label(
                     str(number),
                     size=28,
@@ -1090,8 +1221,24 @@ class HSEManagementApp(App):
                 )
             )
 
+            layout.add_widget(
+                make_label(
+                    detail,
+                    size=12,
+                    height=45,
+                )
+            )
+
+            button.add_widget(layout)
+
+            button.bind(
+                on_release=lambda instance,
+                name=screen_name:
+                self.go_to(name)
+            )
+
             self.dashboard_grid.add_widget(
-                box
+                button
             )
 
     # ========================================================
@@ -1099,7 +1246,6 @@ class HSEManagementApp(App):
     # ========================================================
 
     def build_observations(self):
-
         scroll = ScrollView()
 
         layout = GridLayout(
@@ -1119,42 +1265,27 @@ class HSEManagementApp(App):
                 "HSE INSPECTION / OBSERVATION",
                 size=20,
                 bold=True,
-                height=55,
+                height=50,
             )
         )
 
-        self.obs_date = make_input(
-            "Date"
-        )
-
+        self.obs_date = make_input("Date")
         self.obs_date.text = current_date()
-
-        layout.add_widget(
-            self.obs_date
-        )
+        layout.add_widget(self.obs_date)
 
         self.obs_location = make_input(
-            "Location"
+            "Location *"
         )
-
-        layout.add_widget(
-            self.obs_location
-        )
+        layout.add_widget(self.obs_location)
 
         self.obs_responsible = make_input(
             "Responsible Person"
         )
+        layout.add_widget(self.obs_responsible)
 
-        layout.add_widget(
-            self.obs_responsible
+        self.obs_responsible_designation = make_input(
+            "Responsible Person Designation"
         )
-
-        self.obs_responsible_designation = (
-            make_input(
-                "Responsible Person Designation"
-            )
-        )
-
         layout.add_widget(
             self.obs_responsible_designation
         )
@@ -1178,29 +1309,21 @@ class HSEManagementApp(App):
             height=45,
         )
 
-        layout.add_widget(
-            self.obs_type
-        )
+        layout.add_widget(self.obs_type)
 
         self.obs_text = make_input(
-            "Observation",
+            "Observation / Description *",
             multiline=True,
-            height=110,
+            height=120,
         )
-
-        layout.add_widget(
-            self.obs_text
-        )
+        layout.add_widget(self.obs_text)
 
         self.obs_action = make_input(
-            "Corrective Action",
+            "Corrective Action / Action Required",
             multiline=True,
-            height=110,
+            height=120,
         )
-
-        layout.add_widget(
-            self.obs_action
-        )
+        layout.add_widget(self.obs_action)
 
         layout.add_widget(
             make_label(
@@ -1220,9 +1343,7 @@ class HSEManagementApp(App):
             height=45,
         )
 
-        layout.add_widget(
-            self.obs_status
-        )
+        layout.add_widget(self.obs_status)
 
         layout.add_widget(
             make_label(
@@ -1258,24 +1379,16 @@ class HSEManagementApp(App):
             height=45,
         )
 
-        layout.add_widget(
-            self.obs_category
-        )
+        layout.add_widget(self.obs_category)
 
         self.obs_observed_by = make_input(
             "Observed By"
         )
+        layout.add_widget(self.obs_observed_by)
 
-        layout.add_widget(
-            self.obs_observed_by
+        self.obs_observed_designation = make_input(
+            "Observed By Designation"
         )
-
-        self.obs_observed_designation = (
-            make_input(
-                "Observed By Designation"
-            )
-        )
-
         layout.add_widget(
             self.obs_observed_designation
         )
@@ -1283,15 +1396,21 @@ class HSEManagementApp(App):
         self.obs_observed_id = make_input(
             "Observed By ID Number"
         )
-
         layout.add_widget(
             self.obs_observed_id
         )
 
-        save = Button(
-            text="SAVE OBSERVATION",
-            size_hint_y=None,
-            height=dp(55),
+        self.obs_evidence = make_input(
+            "Evidence / Photo Reference "
+            "(optional)",
+            multiline=True,
+            height=70,
+        )
+        layout.add_widget(self.obs_evidence)
+
+        save = make_button(
+            "SAVE OBSERVATION",
+            55,
         )
 
         save.bind(
@@ -1301,10 +1420,21 @@ class HSEManagementApp(App):
 
         layout.add_widget(save)
 
-        view = Button(
-            text="VIEW SAVED OBSERVATIONS",
-            size_hint_y=None,
-            height=dp(50),
+        clear = make_button(
+            "CLEAR FORM",
+            48,
+        )
+
+        clear.bind(
+            on_release=lambda *_:
+            self.clear_observation()
+        )
+
+        layout.add_widget(clear)
+
+        view = make_button(
+            "VIEW SAVED OBSERVATIONS",
+            50,
         )
 
         view.bind(
@@ -1316,52 +1446,51 @@ class HSEManagementApp(App):
 
         scroll.add_widget(layout)
 
-        return scroll
+        return self.make_screen_layout(
+            "Observations",
+            scroll,
+        )
 
     def save_observation(self):
-
         if not self.obs_location.text.strip():
-
             show_message(
                 "Required",
                 "Please enter the location.",
             )
-
             return
 
         if not self.obs_text.text.strip():
-
             show_message(
                 "Required",
                 "Please enter the observation.",
             )
-
             return
 
         data = {
-            "date": self.obs_date.text,
-            "location":
-                self.obs_location.text,
+            "date": self.obs_date.text.strip(),
+            "location": self.obs_location.text.strip(),
             "responsible_person":
-                self.obs_responsible.text,
+                self.obs_responsible.text.strip(),
             "responsible_designation":
-                self.obs_responsible_designation.text,
+                self.obs_responsible_designation.text.strip(),
             "observation_type":
                 self.obs_type.text,
             "observation":
-                self.obs_text.text,
+                self.obs_text.text.strip(),
             "corrective_action":
-                self.obs_action.text,
+                self.obs_action.text.strip(),
             "status":
                 self.obs_status.text,
             "hse_category":
                 self.obs_category.text,
             "observed_by":
-                self.obs_observed_by.text,
+                self.obs_observed_by.text.strip(),
             "observed_by_designation":
-                self.obs_observed_designation.text,
+                self.obs_observed_designation.text.strip(),
             "observed_by_id":
-                self.obs_observed_id.text,
+                self.obs_observed_id.text.strip(),
+            "evidence":
+                self.obs_evidence.text.strip(),
         }
 
         record_id = self.db.add_observation(
@@ -1430,12 +1559,15 @@ class HSEManagementApp(App):
                 "Observed By ID",
                 data["observed_by_id"],
             ),
+            (
+                "Evidence / Photo Reference",
+                data["evidence"],
+            ),
         ]
 
         export_error = ""
 
         try:
-
             create_rtf_file(
                 rtf_path,
                 "HSE Observation Report",
@@ -1449,15 +1581,12 @@ class HSEManagementApp(App):
             )
 
         except Exception as error:
-
             export_error = str(error)
 
         self.clear_observation()
-
         self.refresh_dashboard()
 
         if export_error:
-
             show_message(
                 "Observation Saved",
                 "Observation saved successfully.\n\n"
@@ -1467,23 +1596,16 @@ class HSEManagementApp(App):
                     export_error,
                 ),
             )
-
         else:
-
             show_message(
                 "Observation Saved",
                 "Observation saved successfully.\n\n"
                 "Record ID: {}\n\n"
-                "PDF:\n{}\n\n"
-                "RTF:\n{}".format(
-                    record_id,
-                    pdf_path,
-                    rtf_path,
-                ),
+                "PDF created.\n"
+                "RTF created.",
             )
 
     def clear_observation(self):
-
         self.obs_location.text = ""
         self.obs_responsible.text = ""
         self.obs_responsible_designation.text = ""
@@ -1492,24 +1614,26 @@ class HSEManagementApp(App):
         self.obs_observed_by.text = ""
         self.obs_observed_designation.text = ""
         self.obs_observed_id.text = ""
+        self.obs_evidence.text = ""
+
+        self.obs_date.text = current_date()
+        self.obs_type.text = "Unsafe Condition"
+        self.obs_status.text = "Open"
+        self.obs_category.text = "PPE"
 
     def view_observations(self):
-
         rows = self.db.get_observations()
 
         if not rows:
-
             show_message(
                 "Observations",
                 "No observations recorded.",
             )
-
             return
 
         output = []
 
         for row in rows:
-
             (
                 record_id,
                 date,
@@ -1520,6 +1644,7 @@ class HSEManagementApp(App):
                 status,
                 category,
                 observed_by,
+                evidence,
             ) = row
 
             output.append(
@@ -1532,6 +1657,7 @@ class HSEManagementApp(App):
                 "Action: {}\n"
                 "Status: {}\n"
                 "Observed By: {}\n"
+                "Evidence: {}\n"
                 "------------------------------".format(
                     record_id,
                     date,
@@ -1542,6 +1668,7 @@ class HSEManagementApp(App):
                     corrective_action,
                     status,
                     observed_by,
+                    evidence or "",
                 )
             )
 
@@ -1555,7 +1682,6 @@ class HSEManagementApp(App):
     # ========================================================
 
     def build_incidents(self):
-
         scroll = ScrollView()
 
         layout = GridLayout(
@@ -1575,31 +1701,22 @@ class HSEManagementApp(App):
                 "ACCIDENT / INCIDENT INVESTIGATION",
                 size=20,
                 bold=True,
-                height=55,
+                height=50,
             )
         )
 
-        self.inc_date = make_input(
-            "Date"
-        )
-
+        self.inc_date = make_input("Date")
         self.inc_date.text = current_date()
-
-        layout.add_widget(
-            self.inc_date
-        )
+        layout.add_widget(self.inc_date)
 
         self.inc_location = make_input(
-            "Location"
+            "Location *"
         )
-
-        layout.add_widget(
-            self.inc_location
-        )
+        layout.add_widget(self.inc_location)
 
         layout.add_widget(
             make_label(
-                "Incident Type",
+                "Incident Classification",
                 bold=True,
                 height=30,
             )
@@ -1622,48 +1739,42 @@ class HSEManagementApp(App):
             height=45,
         )
 
-        layout.add_widget(
-            self.inc_type
-        )
+        layout.add_widget(self.inc_type)
 
         self.inc_description = make_input(
-            "Incident Description",
+            "Incident Description *",
             multiline=True,
-            height=120,
+            height=130,
         )
-
-        layout.add_widget(
-            self.inc_description
-        )
+        layout.add_widget(self.inc_description)
 
         self.inc_immediate = make_input(
             "Immediate Action",
             multiline=True,
-            height=100,
+            height=110,
         )
-
-        layout.add_widget(
-            self.inc_immediate
-        )
+        layout.add_widget(self.inc_immediate)
 
         self.inc_root = make_input(
             "Root Cause",
             multiline=True,
-            height=100,
+            height=110,
         )
-
-        layout.add_widget(
-            self.inc_root
-        )
+        layout.add_widget(self.inc_root)
 
         self.inc_action = make_input(
             "Corrective Action",
             multiline=True,
-            height=100,
+            height=110,
         )
+        layout.add_widget(self.inc_action)
 
         layout.add_widget(
-            self.inc_action
+            make_label(
+                "Status",
+                bold=True,
+                height=30,
+            )
         )
 
         self.inc_status = Spinner(
@@ -1676,14 +1787,11 @@ class HSEManagementApp(App):
             height=45,
         )
 
-        layout.add_widget(
-            self.inc_status
-        )
+        layout.add_widget(self.inc_status)
 
-        save = Button(
-            text="SAVE INCIDENT",
-            size_hint_y=None,
-            height=dp(55),
+        save = make_button(
+            "SAVE INCIDENT",
+            55,
         )
 
         save.bind(
@@ -1693,44 +1801,64 @@ class HSEManagementApp(App):
 
         layout.add_widget(save)
 
+        clear = make_button(
+            "CLEAR FORM",
+            48,
+        )
+
+        clear.bind(
+            on_release=lambda *_:
+            self.clear_incident()
+        )
+
+        layout.add_widget(clear)
+
+        view = make_button(
+            "VIEW SAVED INCIDENTS",
+            50,
+        )
+
+        view.bind(
+            on_release=lambda *_:
+            self.view_incidents()
+        )
+
+        layout.add_widget(view)
+
         scroll.add_widget(layout)
 
-        return scroll
+        return self.make_screen_layout(
+            "Incidents",
+            scroll,
+        )
 
     def save_incident(self):
-
         if not self.inc_location.text.strip():
-
             show_message(
                 "Required",
                 "Please enter the location.",
             )
-
             return
 
         if not self.inc_description.text.strip():
-
             show_message(
                 "Required",
                 "Please enter the incident description.",
             )
-
             return
 
         data = {
-            "date": self.inc_date.text,
-            "location":
-                self.inc_location.text,
-            "incident_type":
-                self.inc_type.text,
+            "date": self.inc_date.text.strip(),
+            "location": self.inc_location.text.strip(),
+            "incident_type": self.inc_type.text,
             "description":
-                self.inc_description.text,
+                self.inc_description.text.strip(),
             "immediate_action":
-                self.inc_immediate.text,
+                self.inc_immediate.text.strip(),
             "root_cause":
-                self.inc_root.text,
+                self.inc_root.text.strip(),
             "corrective_action":
-                self.inc_action.text,
+                self.inc_action.text.strip(),
             "status":
                 self.inc_status.text,
         }
@@ -1739,12 +1867,7 @@ class HSEManagementApp(App):
             data
         )
 
-        self.inc_location.text = ""
-        self.inc_description.text = ""
-        self.inc_immediate.text = ""
-        self.inc_root.text = ""
-        self.inc_action.text = ""
-
+        self.clear_incident()
         self.refresh_dashboard()
 
         show_message(
@@ -1755,12 +1878,74 @@ class HSEManagementApp(App):
             ),
         )
 
+    def clear_incident(self):
+        self.inc_date.text = current_date()
+        self.inc_location.text = ""
+        self.inc_description.text = ""
+        self.inc_immediate.text = ""
+        self.inc_root.text = ""
+        self.inc_action.text = ""
+        self.inc_type.text = "Near Miss"
+        self.inc_status.text = "Open"
+
+    def view_incidents(self):
+        rows = self.db.get_incidents()
+
+        if not rows:
+            show_message(
+                "Incidents",
+                "No incidents recorded.",
+            )
+            return
+
+        output = []
+
+        for row in rows:
+            (
+                record_id,
+                date,
+                location,
+                incident_type,
+                description,
+                immediate_action,
+                root_cause,
+                corrective_action,
+                status,
+            ) = row
+
+            output.append(
+                "ID: {}\n"
+                "Date: {}\n"
+                "Location: {}\n"
+                "Classification: {}\n"
+                "Description: {}\n"
+                "Immediate Action: {}\n"
+                "Root Cause: {}\n"
+                "Corrective Action: {}\n"
+                "Status: {}\n"
+                "------------------------------".format(
+                    record_id,
+                    date,
+                    location,
+                    incident_type,
+                    description,
+                    immediate_action,
+                    root_cause,
+                    corrective_action,
+                    status,
+                )
+            )
+
+        show_message(
+            "Saved Incidents",
+            "\n".join(output),
+        )
+
     # ========================================================
     # AUDITS
     # ========================================================
 
     def build_audits(self):
-
         scroll = ScrollView()
 
         layout = GridLayout(
@@ -1780,62 +1965,49 @@ class HSEManagementApp(App):
                 "HSE AUDIT REGISTER",
                 size=20,
                 bold=True,
-                height=55,
+                height=50,
             )
         )
 
-        self.audit_date = make_input(
-            "Date"
-        )
-
+        self.audit_date = make_input("Date")
         self.audit_date.text = current_date()
-
-        layout.add_widget(
-            self.audit_date
-        )
+        layout.add_widget(self.audit_date)
 
         self.audit_location = make_input(
-            "Location"
+            "Location *"
         )
-
-        layout.add_widget(
-            self.audit_location
-        )
+        layout.add_widget(self.audit_location)
 
         self.audit_type = make_input(
             "Audit Type"
         )
-
-        layout.add_widget(
-            self.audit_type
-        )
+        layout.add_widget(self.audit_type)
 
         self.audit_auditor = make_input(
             "Auditor"
         )
-
-        layout.add_widget(
-            self.audit_auditor
-        )
+        layout.add_widget(self.audit_auditor)
 
         self.audit_findings = make_input(
             "Findings",
             multiline=True,
-            height=120,
+            height=130,
         )
-
-        layout.add_widget(
-            self.audit_findings
-        )
+        layout.add_widget(self.audit_findings)
 
         self.audit_action = make_input(
             "Corrective Action",
             multiline=True,
-            height=100,
+            height=110,
         )
+        layout.add_widget(self.audit_action)
 
         layout.add_widget(
-            self.audit_action
+            make_label(
+                "Status",
+                bold=True,
+                height=30,
+            )
         )
 
         self.audit_status = Spinner(
@@ -1848,14 +2020,11 @@ class HSEManagementApp(App):
             height=45,
         )
 
-        layout.add_widget(
-            self.audit_status
-        )
+        layout.add_widget(self.audit_status)
 
-        save = Button(
-            text="SAVE AUDIT",
-            size_hint_y=None,
-            height=dp(55),
+        save = make_button(
+            "SAVE AUDIT",
+            55,
         )
 
         save.bind(
@@ -1865,33 +2034,57 @@ class HSEManagementApp(App):
 
         layout.add_widget(save)
 
+        clear = make_button(
+            "CLEAR FORM",
+            48,
+        )
+
+        clear.bind(
+            on_release=lambda *_:
+            self.clear_audit()
+        )
+
+        layout.add_widget(clear)
+
+        view = make_button(
+            "VIEW SAVED AUDITS",
+            50,
+        )
+
+        view.bind(
+            on_release=lambda *_:
+            self.view_audits()
+        )
+
+        layout.add_widget(view)
+
         scroll.add_widget(layout)
 
-        return scroll
+        return self.make_screen_layout(
+            "Audits",
+            scroll,
+        )
 
     def save_audit(self):
-
         if not self.audit_location.text.strip():
-
             show_message(
                 "Required",
                 "Please enter the audit location.",
             )
-
             return
 
         data = {
-            "date": self.audit_date.text,
+            "date": self.audit_date.text.strip(),
             "location":
-                self.audit_location.text,
+                self.audit_location.text.strip(),
             "audit_type":
-                self.audit_type.text,
+                self.audit_type.text.strip(),
             "auditor":
-                self.audit_auditor.text,
+                self.audit_auditor.text.strip(),
             "findings":
-                self.audit_findings.text,
+                self.audit_findings.text.strip(),
             "corrective_action":
-                self.audit_action.text,
+                self.audit_action.text.strip(),
             "status":
                 self.audit_status.text,
         }
@@ -1900,12 +2093,7 @@ class HSEManagementApp(App):
             data
         )
 
-        self.audit_location.text = ""
-        self.audit_type.text = ""
-        self.audit_auditor.text = ""
-        self.audit_findings.text = ""
-        self.audit_action.text = ""
-
+        self.clear_audit()
         self.refresh_dashboard()
 
         show_message(
@@ -1916,12 +2104,70 @@ class HSEManagementApp(App):
             ),
         )
 
+    def clear_audit(self):
+        self.audit_date.text = current_date()
+        self.audit_location.text = ""
+        self.audit_type.text = ""
+        self.audit_auditor.text = ""
+        self.audit_findings.text = ""
+        self.audit_action.text = ""
+        self.audit_status.text = "Open"
+
+    def view_audits(self):
+        rows = self.db.get_audits()
+
+        if not rows:
+            show_message(
+                "Audits",
+                "No audits recorded.",
+            )
+            return
+
+        output = []
+
+        for row in rows:
+            (
+                record_id,
+                date,
+                location,
+                audit_type,
+                auditor,
+                findings,
+                corrective_action,
+                status,
+            ) = row
+
+            output.append(
+                "ID: {}\n"
+                "Date: {}\n"
+                "Location: {}\n"
+                "Audit Type: {}\n"
+                "Auditor: {}\n"
+                "Findings: {}\n"
+                "Corrective Action: {}\n"
+                "Status: {}\n"
+                "------------------------------".format(
+                    record_id,
+                    date,
+                    location,
+                    audit_type,
+                    auditor,
+                    findings,
+                    corrective_action,
+                    status,
+                )
+            )
+
+        show_message(
+            "Saved Audits",
+            "\n".join(output),
+        )
+
     # ========================================================
     # CAPA
     # ========================================================
 
     def build_capa(self):
-
         scroll = ScrollView()
 
         layout = GridLayout(
@@ -1941,70 +2187,54 @@ class HSEManagementApp(App):
                 "CAPA REGISTER",
                 size=20,
                 bold=True,
-                height=55,
+                height=50,
             )
         )
 
-        self.capa_date = make_input(
-            "Date"
-        )
-
+        self.capa_date = make_input("Date")
         self.capa_date.text = current_date()
-
-        layout.add_widget(
-            self.capa_date
-        )
+        layout.add_widget(self.capa_date)
 
         self.capa_source = make_input(
             "Source"
         )
-
-        layout.add_widget(
-            self.capa_source
-        )
+        layout.add_widget(self.capa_source)
 
         self.capa_location = make_input(
             "Location"
         )
-
-        layout.add_widget(
-            self.capa_location
-        )
+        layout.add_widget(self.capa_location)
 
         self.capa_finding = make_input(
-            "Finding",
+            "Finding *",
             multiline=True,
-            height=100,
+            height=110,
         )
-
-        layout.add_widget(
-            self.capa_finding
-        )
+        layout.add_widget(self.capa_finding)
 
         self.capa_action = make_input(
             "Corrective / Preventive Action",
             multiline=True,
-            height=100,
+            height=110,
         )
-
-        layout.add_widget(
-            self.capa_action
-        )
+        layout.add_widget(self.capa_action)
 
         self.capa_responsible = make_input(
             "Responsible Person"
         )
-
-        layout.add_widget(
-            self.capa_responsible
-        )
+        layout.add_widget(self.capa_responsible)
 
         self.capa_target = make_input(
             "Target Date"
         )
+        layout.add_widget(self.capa_target)
 
         layout.add_widget(
-            self.capa_target
+            make_label(
+                "Status",
+                bold=True,
+                height=30,
+            )
         )
 
         self.capa_status = Spinner(
@@ -2019,22 +2249,16 @@ class HSEManagementApp(App):
             height=45,
         )
 
-        layout.add_widget(
-            self.capa_status
-        )
+        layout.add_widget(self.capa_status)
 
         self.capa_closeout = make_input(
             "Closeout Date"
         )
+        layout.add_widget(self.capa_closeout)
 
-        layout.add_widget(
-            self.capa_closeout
-        )
-
-        save = Button(
-            text="SAVE CAPA",
-            size_hint_y=None,
-            height=dp(55),
+        save = make_button(
+            "SAVE CAPA",
+            55,
         )
 
         save.bind(
@@ -2044,10 +2268,21 @@ class HSEManagementApp(App):
 
         layout.add_widget(save)
 
-        export = Button(
-            text="EXPORT CAPA TO CSV",
-            size_hint_y=None,
-            height=dp(55),
+        clear = make_button(
+            "CLEAR FORM",
+            48,
+        )
+
+        clear.bind(
+            on_release=lambda *_:
+            self.clear_capa()
+        )
+
+        layout.add_widget(clear)
+
+        export = make_button(
+            "EXPORT CAPA TO CSV",
+            55,
         )
 
         export.bind(
@@ -2057,10 +2292,9 @@ class HSEManagementApp(App):
 
         layout.add_widget(export)
 
-        view = Button(
-            text="VIEW CAPA REGISTER",
-            size_hint_y=None,
-            height=dp(50),
+        view = make_button(
+            "VIEW CAPA REGISTER",
+            50,
         )
 
         view.bind(
@@ -2072,8 +2306,8 @@ class HSEManagementApp(App):
 
         layout.add_widget(
             make_label(
-                "CSV files open directly in Microsoft "
-                "Excel and Google Sheets.",
+                "CSV export can be opened in "
+                "Microsoft Excel or Google Sheets.",
                 size=13,
                 height=55,
             )
@@ -2081,47 +2315,45 @@ class HSEManagementApp(App):
 
         scroll.add_widget(layout)
 
-        return scroll
+        return self.make_screen_layout(
+            "CAPA",
+            scroll,
+        )
 
     def save_capa(self):
-
         if not self.capa_finding.text.strip():
-
             show_message(
                 "Required",
                 "Please enter the finding.",
             )
-
             return
 
         data = {
-            "date": self.capa_date.text,
-            "source": self.capa_source.text,
-            "location": self.capa_location.text,
-            "finding": self.capa_finding.text,
-            "action": self.capa_action.text,
+            "date":
+                self.capa_date.text.strip(),
+            "source":
+                self.capa_source.text.strip(),
+            "location":
+                self.capa_location.text.strip(),
+            "finding":
+                self.capa_finding.text.strip(),
+            "action":
+                self.capa_action.text.strip(),
             "responsible_person":
-                self.capa_responsible.text,
+                self.capa_responsible.text.strip(),
             "target_date":
-                self.capa_target.text,
+                self.capa_target.text.strip(),
             "status":
                 self.capa_status.text,
             "closeout_date":
-                self.capa_closeout.text,
+                self.capa_closeout.text.strip(),
         }
 
         record_id = self.db.add_capa(
             data
         )
 
-        self.capa_source.text = ""
-        self.capa_location.text = ""
-        self.capa_finding.text = ""
-        self.capa_action.text = ""
-        self.capa_responsible.text = ""
-        self.capa_target.text = ""
-        self.capa_closeout.text = ""
-
+        self.clear_capa()
         self.refresh_dashboard()
 
         show_message(
@@ -2132,17 +2364,25 @@ class HSEManagementApp(App):
             ),
         )
 
-    def export_capa_csv(self):
+    def clear_capa(self):
+        self.capa_date.text = current_date()
+        self.capa_source.text = ""
+        self.capa_location.text = ""
+        self.capa_finding.text = ""
+        self.capa_action.text = ""
+        self.capa_responsible.text = ""
+        self.capa_target.text = ""
+        self.capa_closeout.text = ""
+        self.capa_status.text = "Open"
 
+    def export_capa_csv(self):
         rows = self.db.get_capa()
 
         if not rows:
-
             show_message(
                 "Export",
                 "No CAPA records available.",
             )
-
             return
 
         timestamp = datetime.now().strftime(
@@ -2170,7 +2410,6 @@ class HSEManagementApp(App):
         ]
 
         try:
-
             with open(
                 filename,
                 "w",
@@ -2178,13 +2417,9 @@ class HSEManagementApp(App):
                 encoding="utf-8-sig",
             ) as file:
 
-                writer = csv.writer(
-                    file
-                )
+                writer = csv.writer(file)
 
-                writer.writerow(
-                    headers
-                )
+                writer.writerow(headers)
 
                 for row in rows:
                     writer.writerow(row)
@@ -2192,35 +2427,28 @@ class HSEManagementApp(App):
             show_message(
                 "Export Complete",
                 "CAPA register exported successfully.\n\n"
-                "File:\n{}".format(
-                    filename
-                ),
+                "CSV file created successfully.",
             )
 
         except Exception as error:
-
             show_message(
                 "Export Error",
                 str(error),
             )
 
     def view_capa(self):
-
         rows = self.db.get_capa()
 
         if not rows:
-
             show_message(
                 "CAPA",
                 "No CAPA records available.",
             )
-
             return
 
         output = []
 
         for row in rows:
-
             (
                 record_id,
                 date,
@@ -2265,11 +2493,10 @@ class HSEManagementApp(App):
         )
 
     # ========================================================
-    # CLOSE DATABASE
+    # APPLICATION CLOSE
     # ========================================================
 
     def on_stop(self):
-
         try:
             self.db.close()
         except Exception:
