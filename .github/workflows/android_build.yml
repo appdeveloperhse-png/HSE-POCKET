@@ -7,97 +7,174 @@ on:
       - main
 
 jobs:
-
   build:
-
+    name: Build HSE Management APK
     runs-on: ubuntu-22.04
+
+    env:
+      P4A_freetype_DIR: /home/runner/freetype-source
+      PACKAGES_PATH: /home/runner/.buildozer/android/packages
 
     steps:
 
-      - name: Checkout
+      # ---------------------------------------------------------
+      # 1. Checkout
+      # ---------------------------------------------------------
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+
+      # ---------------------------------------------------------
+      # 2. Python
+      # ---------------------------------------------------------
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Setup Java
+
+      # ---------------------------------------------------------
+      # 3. Java
+      # ---------------------------------------------------------
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Install system packages
+
+      # ---------------------------------------------------------
+      # 4. Install Linux packages
+      # ---------------------------------------------------------
+      - name: Install system dependencies
         run: |
           sudo apt-get update
 
           sudo apt-get install -y \
+            build-essential \
             git \
             zip \
             unzip \
-            ant \
             autoconf \
             automake \
-            autopoint \
-            build-essential \
-            cmake \
-            gettext \
-            libffi-dev \
-            libjpeg-dev \
-            libpng-dev \
-            libssl-dev \
             libtool \
-            liblzma-dev \
-            libbz2-dev \
-            libreadline-dev \
+            pkg-config \
+            gettext \
+            libltdl-dev \
+            libffi-dev \
+            libssl-dev \
             libsqlite3-dev \
+            zlib1g-dev \
             libncurses5-dev \
             libncursesw5-dev \
-            libfreetype6-dev \
-            pkg-config \
-            zlib1g-dev
+            cmake \
+            ninja-build \
+            ccache \
+            curl \
+            wget
 
+
+      # ---------------------------------------------------------
+      # 5. Install Buildozer
+      # ---------------------------------------------------------
       - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
           python -m pip install \
             buildozer==1.6.0 \
-            "Cython==0.29.34"
+            cython==0.29.34
 
+
+      # ---------------------------------------------------------
+      # 6. Verify project files
+      # ---------------------------------------------------------
+      - name: Verify project files
+        run: |
+          echo "========================================"
+          echo "PROJECT FILES"
+          echo "========================================"
+
+          pwd
+
+          echo ""
+          echo "Root directory:"
+          ls -la
+
+          echo ""
+          echo "Workflow directory:"
+          ls -la .github/workflows || true
+
+          echo ""
+          echo "requirements.txt:"
+          cat requirements.txt
+
+          echo ""
+          echo "buildozer.spec:"
+          cat buildozer.spec
+
+          echo ""
+          echo "Checking main.py:"
+          test -f main.py
+
+          echo "main.py found."
+
+
+      # ---------------------------------------------------------
+      # 7. Python syntax check
+      # ---------------------------------------------------------
       - name: Check Python syntax
         run: |
           python -m py_compile main.py
 
-      - name: Verify Android requirements
+          echo "Python syntax check PASSED."
+
+
+      # ---------------------------------------------------------
+      # 8. Make sure old packages are NOT present
+      # ---------------------------------------------------------
+      - name: Check Android dependency list
         run: |
           echo "========================================"
-          echo "BUILD REQUIREMENTS"
+          echo "CHECKING REQUIREMENTS"
           echo "========================================"
 
-          grep "^requirements" buildozer.spec
-
-          echo
-          echo "========================================"
-          echo "requirements.txt"
-          echo "========================================"
-
-          cat requirements.txt
-
-          echo
-          echo "========================================"
-          echo "Checking forbidden packages"
-          echo "========================================"
-
-          if grep -Eiq 'openpyxl|reportlab|python-docx' buildozer.spec requirements.txt; then
-            echo "ERROR: Android-incompatible package found."
+          if grep -Eiq 'openpyxl|reportlab|python-docx|docx' requirements.txt; then
+            echo "ERROR: Unsupported/removed package found in requirements.txt"
+            cat requirements.txt
             exit 1
           fi
 
-          echo "OK"
+          if grep -Eiq 'requests|charset-normalizer|charset_normalizer|certifi|urllib3|idna' requirements.txt; then
+            echo "ERROR: Network dependency found in requirements.txt"
+            cat requirements.txt
+            exit 1
+          fi
 
-      - name: Prepare FreeType
+          echo "Dependency check PASSED."
+
+
+      # ---------------------------------------------------------
+      # 9. Clean previous Buildozer build
+      # ---------------------------------------------------------
+      - name: Clean previous Android build
+        run: |
+          echo "Removing previous Buildozer Android build..."
+
+          rm -rf .buildozer/android/platform/build-arm64-v8a/build/python-installs
+          rm -rf .buildozer/android/platform/build-arm64-v8a/dists
+          rm -rf .buildozer/android/platform/build-arm64-v8a/build/python-installs
+
+          echo "Old Python installation cache removed."
+
+
+      # ---------------------------------------------------------
+      # 10. Download FreeType from GitHub
+      #
+      # Savannah is unreachable from the GitHub runner.
+      # Use GitHub source instead.
+      # ---------------------------------------------------------
+      - name: Prepare FreeType source
         run: |
           rm -rf "$HOME/freetype-source"
 
@@ -107,56 +184,106 @@ jobs:
             https://github.com/freetype/freetype.git \
             "$HOME/freetype-source"
 
+          echo ""
+          echo "========================================"
+          echo "FREETYPE SOURCE"
+          echo "========================================"
+
+          echo "$HOME/freetype-source"
+
           test -f "$HOME/freetype-source/CMakeLists.txt"
 
-      - name: Clean previous Buildozer files
-        run: |
-          rm -rf .buildozer
-          rm -rf bin
+          echo "FreeType source verified."
 
-          mkdir -p bin
 
-      - name: Build APK
-        env:
-          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      # ---------------------------------------------------------
+      # 11. Export FreeType path
+      # ---------------------------------------------------------
+      - name: Configure FreeType
         run: |
+          echo "P4A_freetype_DIR=$HOME/freetype-source" >> "$GITHUB_ENV"
 
           export P4A_freetype_DIR="$HOME/freetype-source"
 
-          echo "========================================"
-          echo "FreeType"
-          echo "========================================"
-
-          echo "$P4A_freetype_DIR"
+          echo "P4A_freetype_DIR=$P4A_freetype_DIR"
 
           test -d "$P4A_freetype_DIR"
 
-          echo
+
+      # ---------------------------------------------------------
+      # 12. Show Android environment
+      # ---------------------------------------------------------
+      - name: Show Android environment
+        run: |
           echo "========================================"
-          echo "Starting Buildozer"
+          echo "ANDROID ENVIRONMENT"
           echo "========================================"
+
+          echo "JAVA_HOME=$JAVA_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
+          echo "ANDROIDAPI=$ANDROIDAPI"
+          echo "ANDROIDMINAPI=$ANDROIDMINAPI"
+          echo "P4A_freetype_DIR=$P4A_freetype_DIR"
+
+          java -version
+
+          python --version
+
+          buildozer --version
+
+
+      # ---------------------------------------------------------
+      # 13. Build APK
+      # ---------------------------------------------------------
+      - name: Build APK
+        run: |
+          echo "========================================"
+          echo "STARTING ANDROID BUILD"
+          echo "========================================"
+
+          export P4A_freetype_DIR="$HOME/freetype-source"
 
           buildozer -v android debug
 
+
+      # ---------------------------------------------------------
+      # 14. Show generated APK
+      # ---------------------------------------------------------
       - name: Show APK
-        if: always()
+        if: success()
         run: |
-
           echo "========================================"
-          echo "APK FILES"
+          echo "GENERATED APK"
           echo "========================================"
 
-          find . \
-            -type f \
-            \( -name "*.apk" -o -name "*.aab" \) \
-            -print || true
+          find bin -maxdepth 1 -type f -name "*.apk" -print -exec ls -lh {} \;
 
+
+      # ---------------------------------------------------------
+      # 15. Upload APK
+      # ---------------------------------------------------------
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: HSE-Management-APK
-          path: |
-            bin/*.apk
-            bin/*.aab
+          path: bin/*.apk
           if-no-files-found: error
+          retention-days: 30
+
+
+      # ---------------------------------------------------------
+      # 16. Upload build logs if build fails
+      # ---------------------------------------------------------
+      - name: Upload Buildozer logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HSE-Build-Logs
+          path: |
+            .buildozer/android/platform/build-arm64-v8a/**/*.log
+            .buildozer/android/platform/build-arm64-v8a/**/config.log
+          if-no-files-found: ignore
+          retention-days: 7
