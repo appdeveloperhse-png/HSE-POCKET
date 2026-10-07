@@ -1,6 +1,19 @@
 # ============================================================
 # HSE-POCKET
 # Complete Kivy HSE Management System
+# FIXED VERSION
+#
+# Fixes:
+# 1. Android gallery attachment callback
+# 2. Observation save/register refresh
+# 3. Observation photo attachment
+# 4. Word export with Android Save As
+# 5. Excel export with Android Save As
+# 6. PDF export with Android Save As
+# 7. Company/project/logo included in reports
+# 8. Back button returns HOME instead of closing app
+#
+# DO NOT CHANGE buildozer.spec / workflow / requirements
 # ============================================================
 
 import os
@@ -8,6 +21,7 @@ import csv
 import base64
 import sqlite3
 import html
+import mimetypes
 from datetime import datetime
 
 from kivy.app import App
@@ -42,6 +56,10 @@ TEXT = (0.10, 0.13, 0.17, 1)
 MUTED = (0.40, 0.44, 0.49, 1)
 
 
+# ============================================================
+# BASIC HELPERS
+# ============================================================
+
 def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -50,9 +68,13 @@ def today():
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def make_label(text="", size=13, color=TEXT,
-               bold=False, height=34):
-
+def make_label(
+    text="",
+    size=13,
+    color=TEXT,
+    bold=False,
+    height=34
+):
     x = Label(
         text=str(text),
         size_hint_y=None,
@@ -76,8 +98,11 @@ def make_label(text="", size=13, color=TEXT,
     return x
 
 
-def make_input(hint="", height=44, multiline=False):
-
+def make_input(
+    hint="",
+    height=44,
+    multiline=False
+):
     return TextInput(
         hint_text=hint,
         size_hint_y=None,
@@ -93,8 +118,12 @@ def make_input(hint="", height=44, multiline=False):
     )
 
 
-def make_button(text, color=BLUE, height=44, size=10):
-
+def make_button(
+    text,
+    color=BLUE,
+    height=44,
+    size=10
+):
     return Button(
         text=text,
         size_hint_y=None,
@@ -125,8 +154,6 @@ def show_message(title, message):
         False,
         100
     )
-
-    label.size_hint_y = None
 
     label.bind(
         texture_size=lambda obj, value:
@@ -164,14 +191,15 @@ def show_message(title, message):
 
 class Card(BoxLayout):
 
-    def __init__(self, bg=WHITE, **kwargs):
-
+    def __init__(
+        self,
+        bg=WHITE,
+        **kwargs
+    ):
         super().__init__(**kwargs)
 
         with self.canvas.before:
-
             self.card_color = Color(*bg)
-
             self.rectangle = RoundedRectangle(
                 pos=self.pos,
                 size=self.size,
@@ -184,7 +212,6 @@ class Card(BoxLayout):
         )
 
     def update_card(self, *args):
-
         self.rectangle.pos = self.pos
         self.rectangle.size = self.size
 
@@ -396,7 +423,11 @@ class Database:
             }
         )
 
-    def ensure_columns(self, table, columns):
+    def ensure_columns(
+        self,
+        table,
+        columns
+    ):
 
         existing = [
             row[1]
@@ -420,7 +451,11 @@ class Database:
 
         self.connection.commit()
 
-    def add(self, table, data):
+    def add(
+        self,
+        table,
+        data
+    ):
 
         keys = list(data.keys())
 
@@ -434,21 +469,23 @@ class Database:
             + ")"
         )
 
-        self.connection.execute(
+        cursor = self.connection.execute(
             query,
             [data[key] for key in keys]
         )
 
         self.connection.commit()
 
-        return self.connection.execute(
-            "SELECT last_insert_rowid()"
-        ).fetchone()[0]
+        return cursor.lastrowid
 
-    def update(self, table, record_id, data):
+    def update(
+        self,
+        table,
+        record_id,
+        data
+    ):
 
         parts = []
-
         values = []
 
         for key, value in data.items():
@@ -478,7 +515,11 @@ class Database:
             "SELECT COUNT(*) FROM " + table
         ).fetchone()[0]
 
-    def status_count(self, table, status):
+    def status_count(
+        self,
+        table,
+        status
+    ):
 
         return self.connection.execute(
             "SELECT COUNT(*) FROM "
@@ -518,7 +559,7 @@ class Database:
     def get_settings(self):
 
         row = self.connection.execute(
-            "SELECT project_name,company_name,logo_path "
+            "SELECT project_name, company_name, logo_path "
             "FROM settings WHERE id=1"
         ).fetchone()
 
@@ -594,10 +635,13 @@ class Database:
 
 
 # ============================================================
-# MAIN APPLICATION
+# MAIN APP
 # ============================================================
 
 class HSEPocket(App):
+
+    GALLERY_REQUEST = 7001
+    EXPORT_REQUEST = 7002
 
     def build(self):
 
@@ -623,12 +667,33 @@ class HSEPocket(App):
             exist_ok=True
         )
 
+        self.export_directory = os.path.join(
+            self.app_directory,
+            "Exports"
+        )
+
+        os.makedirs(
+            self.export_directory,
+            exist_ok=True
+        )
+
         self.db = Database(
             os.path.join(
                 self.app_directory,
                 "hse_pocket.db"
             )
         )
+
+        self.gallery_callback = None
+        self.gallery_prefix = "photo"
+
+        self.export_source = None
+        self.export_filename = None
+        self.export_mime = None
+
+        self.android_activity_bound = False
+
+        self.bind_android_activity_result()
 
         self.sm = ScreenManager()
 
@@ -657,7 +722,6 @@ class HSEPocket(App):
                 screen
             )
 
-        # Android hardware back button
         Window.bind(
             on_keyboard=self.on_back_button
         )
@@ -665,7 +729,412 @@ class HSEPocket(App):
         return self.sm
 
     # ========================================================
-    # BACK BUTTON FIX
+    # ANDROID ACTIVITY RESULT
+    # ========================================================
+
+    def bind_android_activity_result(self):
+
+        try:
+
+            from android import activity
+
+            activity.bind(
+                on_activity_result=self.on_activity_result
+            )
+
+            self.android_activity_bound = True
+
+        except Exception:
+
+            self.android_activity_bound = False
+
+    def on_activity_result(
+        self,
+        request_code,
+        result_code,
+        intent
+    ):
+
+        try:
+
+            # Android RESULT_OK = -1
+            if result_code != -1:
+                return
+
+            if intent is None:
+                return
+
+            if request_code == self.GALLERY_REQUEST:
+
+                uri = intent.getData()
+
+                if uri is None:
+
+                    show_message(
+                        "Gallery",
+                        "No image was selected."
+                    )
+
+                    return
+
+                path = self.copy_android_uri_to_file(
+                    uri,
+                    self.gallery_prefix
+                )
+
+                if not path:
+
+                    show_message(
+                        "Gallery",
+                        "The selected image could not be copied."
+                    )
+
+                    return
+
+                if self.gallery_callback:
+
+                    callback = self.gallery_callback
+
+                    self.gallery_callback = None
+
+                    callback(path)
+
+                return
+
+            if request_code == self.EXPORT_REQUEST:
+
+                uri = intent.getData()
+
+                if uri is None:
+
+                    show_message(
+                        "Export",
+                        "No save location was selected."
+                    )
+
+                    return
+
+                if not self.export_source:
+
+                    show_message(
+                        "Export",
+                        "Export source file is missing."
+                    )
+
+                    return
+
+                success = self.copy_file_to_android_uri(
+                    self.export_source,
+                    uri
+                )
+
+                if success:
+
+                    show_message(
+                        "EXPORT COMPLETE",
+                        "File saved successfully.\n\n"
+                        + str(self.export_filename)
+                    )
+
+                else:
+
+                    show_message(
+                        "EXPORT ERROR",
+                        "Android could not save the exported file."
+                    )
+
+                self.export_source = None
+                self.export_filename = None
+                self.export_mime = None
+
+        except Exception as error:
+
+            show_message(
+                "Android Error",
+                str(error)
+            )
+
+    # ========================================================
+    # COPY GALLERY FILE
+    # ========================================================
+
+    def copy_android_uri_to_file(
+        self,
+        uri,
+        prefix
+    ):
+
+        try:
+
+            from jnius import autoclass
+
+            PythonActivity = autoclass(
+                "org.kivy.android.PythonActivity"
+            )
+
+            activity_instance = (
+                PythonActivity.mActivity
+            )
+
+            resolver = (
+                activity_instance
+                .getContentResolver()
+            )
+
+            input_stream = (
+                resolver.openInputStream(uri)
+            )
+
+            if input_stream is None:
+                return None
+
+            extension = ".jpg"
+
+            try:
+
+                mime = resolver.getType(uri)
+
+                if mime:
+
+                    guessed = mimetypes.guess_extension(
+                        str(mime)
+                    )
+
+                    if guessed:
+                        extension = guessed
+
+            except Exception:
+                pass
+
+            timestamp = datetime.now().strftime(
+                "%Y%m%d_%H%M%S_%f"
+            )
+
+            filename = (
+                prefix
+                + "_"
+                + timestamp
+                + extension
+            )
+
+            destination = os.path.join(
+                self.photo_directory,
+                filename
+            )
+
+            with open(
+                destination,
+                "wb"
+            ) as output:
+
+                buffer = bytearray(8192)
+
+                while True:
+
+                    length = input_stream.read(
+                        buffer
+                    )
+
+                    if length is None:
+                        break
+
+                    if length == -1:
+                        break
+
+                    if length == 0:
+                        continue
+
+                    output.write(
+                        bytes(
+                            buffer[:length]
+                        )
+                    )
+
+            input_stream.close()
+
+            if os.path.exists(destination):
+
+                if os.path.getsize(destination) > 0:
+
+                    return destination
+
+            return None
+
+        except Exception as error:
+
+            show_message(
+                "Image Error",
+                "Unable to copy selected image.\n\n"
+                + str(error)
+            )
+
+            return None
+
+    # ========================================================
+    # COPY EXPORT FILE TO ANDROID URI
+    # ========================================================
+
+    def copy_file_to_android_uri(
+        self,
+        source,
+        destination_uri
+    ):
+
+        try:
+
+            from jnius import autoclass
+
+            PythonActivity = autoclass(
+                "org.kivy.android.PythonActivity"
+            )
+
+            activity_instance = (
+                PythonActivity.mActivity
+            )
+
+            resolver = (
+                activity_instance
+                .getContentResolver()
+            )
+
+            output_stream = (
+                resolver.openOutputStream(
+                    destination_uri
+                )
+            )
+
+            if output_stream is None:
+                return False
+
+            with open(
+                source,
+                "rb"
+            ) as input_file:
+
+                while True:
+
+                    chunk = input_file.read(
+                        8192
+                    )
+
+                    if not chunk:
+                        break
+
+                    output_stream.write(
+                        chunk
+                    )
+
+            output_stream.flush()
+            output_stream.close()
+
+            return True
+
+        except Exception:
+
+            # Second method using Java file streams.
+            try:
+
+                from jnius import autoclass
+
+                PythonActivity = autoclass(
+                    "org.kivy.android.PythonActivity"
+                )
+
+                activity_instance = (
+                    PythonActivity.mActivity
+                )
+
+                resolver = (
+                    activity_instance
+                    .getContentResolver()
+                )
+
+                output_stream = (
+                    resolver.openOutputStream(
+                        destination_uri
+                    )
+                )
+
+                if output_stream is None:
+                    return False
+
+                with open(
+                    source,
+                    "rb"
+                ) as input_file:
+
+                    data = input_file.read()
+
+                output_stream.write(data)
+                output_stream.flush()
+                output_stream.close()
+
+                return True
+
+            except Exception:
+                return False
+
+    # ========================================================
+    # ANDROID SAVE AS
+    # ========================================================
+
+    def save_export_to_android(
+        self,
+        source_path,
+        filename,
+        mime_type
+    ):
+
+        self.export_source = source_path
+        self.export_filename = filename
+        self.export_mime = mime_type
+
+        try:
+
+            from jnius import autoclass
+
+            Intent = autoclass(
+                "android.content.Intent"
+            )
+
+            PythonActivity = autoclass(
+                "org.kivy.android.PythonActivity"
+            )
+
+            intent = Intent(
+                Intent.ACTION_CREATE_DOCUMENT
+            )
+
+            intent.addCategory(
+                Intent.CATEGORY_OPENABLE
+            )
+
+            intent.setType(
+                mime_type
+            )
+
+            intent.putExtra(
+                Intent.EXTRA_TITLE,
+                filename
+            )
+
+            PythonActivity.mActivity.startActivityForResult(
+                intent,
+                self.EXPORT_REQUEST
+            )
+
+        except Exception as error:
+
+            self.export_source = None
+
+            show_message(
+                "Export",
+                "Android Save As could not be opened.\n\n"
+                + str(error)
+            )
+
+    # ========================================================
+    # BACK BUTTON
     # ========================================================
 
     def on_back_button(
@@ -677,7 +1146,6 @@ class HSEPocket(App):
         modifiers
     ):
 
-        # Android back key
         if key == 27 or key == 1001:
 
             current = self.sm.current
@@ -690,7 +1158,6 @@ class HSEPocket(App):
 
                 return True
 
-            # On HOME, allow Android to exit
             return False
 
         return False
@@ -744,7 +1211,11 @@ class HSEPocket(App):
 
         return bar
 
-    def page(self, title, content):
+    def page(
+        self,
+        title,
+        content
+    ):
 
         root = BoxLayout(
             orientation="vertical"
@@ -922,7 +1393,8 @@ class HSEPocket(App):
         )
 
         settings_button.bind(
-            on_release=lambda _: self.go("settings")
+            on_release=lambda _:
+            self.go("settings")
         )
 
         grid.add_widget(settings_button)
@@ -986,7 +1458,8 @@ class HSEPocket(App):
         )
 
         refresh.bind(
-            on_release=lambda _: self.refresh_dashboard()
+            on_release=lambda _:
+            self.refresh_dashboard()
         )
 
         grid.add_widget(refresh)
@@ -1134,7 +1607,7 @@ class HSEPocket(App):
             )
 
     # ========================================================
-    # ANDROID GALLERY PICKER
+    # ANDROID GALLERY
     # ========================================================
 
     def select_gallery_image(
@@ -1170,17 +1643,25 @@ class HSEPocket(App):
                 Intent.CATEGORY_OPENABLE
             )
 
+            # Allow access to image providers that support it
+            try:
+
+                intent.addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                )
+
+            except Exception:
+                pass
+
             PythonActivity.mActivity.startActivityForResult(
                 intent,
-                7001
-            )
-
-            show_message(
-                "Gallery",
-                "Select an image from your phone gallery."
+                self.GALLERY_REQUEST
             )
 
         except Exception as error:
+
+            self.gallery_callback = None
 
             show_message(
                 "Gallery",
@@ -1206,7 +1687,10 @@ class HSEPocket(App):
             )
         )
 
-        self.obs_date = make_input("Date")
+        self.obs_date = make_input(
+            "Date"
+        )
+
         self.obs_date.text = today()
 
         self.obs_location = make_input(
@@ -1391,7 +1875,10 @@ class HSEPocket(App):
 
     def save_observation(self):
 
-        if not self.obs_location.text.strip():
+        location = self.obs_location.text.strip()
+        description = self.obs_description.text.strip()
+
+        if not location:
 
             show_message(
                 "Required",
@@ -1400,7 +1887,7 @@ class HSEPocket(App):
 
             return
 
-        if not self.obs_description.text.strip():
+        if not description:
 
             show_message(
                 "Required",
@@ -1409,35 +1896,81 @@ class HSEPocket(App):
 
             return
 
-        record_id = self.db.add(
-            "observations",
-            {
-                "date": self.obs_date.text,
-                "location": self.obs_location.text,
-                "responsible": self.obs_responsible.text,
-                "designation": self.obs_designation.text,
-                "type": self.obs_type.text,
-                "category": self.obs_category.text,
-                "observation": self.obs_description.text,
-                "action": self.obs_action.text,
-                "status": self.obs_status.text,
-                "observed_by": self.obs_by.text,
-                "evidence": self.obs_evidence.text,
-                "photo_path": self.obs_photo,
-                "created_at": now()
-            }
-        )
+        try:
 
-        show_message(
-            "Saved",
-            "Observation #%d saved successfully."
-            % record_id
-        )
+            record_id = self.db.add(
+                "observations",
+                {
+                    "date": self.obs_date.text.strip(),
+                    "location": location,
+                    "responsible":
+                        self.obs_responsible.text.strip(),
+                    "designation":
+                        self.obs_designation.text.strip(),
+                    "type": self.obs_type.text,
+                    "category": self.obs_category.text,
+                    "observation": description,
+                    "action":
+                        self.obs_action.text.strip(),
+                    "status": self.obs_status.text,
+                    "observed_by":
+                        self.obs_by.text.strip(),
+                    "evidence":
+                        self.obs_evidence.text.strip(),
+                    "photo_path":
+                        self.obs_photo or "",
+                    "created_at": now()
+                }
+            )
 
-        self.refresh_dashboard()
+            # Verify that the record really exists
+            check = self.db.connection.execute(
+                "SELECT id FROM observations WHERE id=?",
+                (record_id,)
+            ).fetchone()
+
+            if not check:
+
+                show_message(
+                    "Save Error",
+                    "The observation could not be verified in the database."
+                )
+
+                return
+
+            self.refresh_dashboard()
+
+            # Clear only the observation form after successful save
+            self.obs_location.text = ""
+            self.obs_responsible.text = ""
+            self.obs_designation.text = ""
+            self.obs_description.text = ""
+            self.obs_action.text = ""
+            self.obs_by.text = ""
+            self.obs_evidence.text = ""
+            self.obs_photo = ""
+
+            self.obs_photo_label.text = (
+                "No photo attached"
+            )
+
+            show_message(
+                "Observation Saved",
+                "Observation #%d saved successfully.\n\n"
+                "It is now available in the Observation Register."
+                % record_id
+            )
+
+        except Exception as error:
+
+            show_message(
+                "Save Error",
+                "Observation was not saved.\n\n"
+                + str(error)
+            )
 
     # ========================================================
-    # OBSERVATION REGISTER - TABLE
+    # OBSERVATION REGISTER
     # ========================================================
 
     def observation_register(self):
@@ -1450,16 +1983,29 @@ class HSEPocket(App):
             spacing=dp(6)
         )
 
+        title = make_label(
+            "OBSERVATION REGISTER - %d RECORD(S)"
+            % len(rows),
+            13,
+            NAVY,
+            True,
+            32
+        )
+
+        box.add_widget(title)
+
         scroll = ScrollView(
             do_scroll_x=True,
-            do_scroll_y=True
+            do_scroll_y=True,
+            bar_width=dp(4)
         )
 
         table = GridLayout(
             cols=12,
             size_hint_y=None,
-            spacing=dp(2),
-            padding=dp(2)
+            size_hint_x=1,
+            spacing=dp(1),
+            padding=dp(1)
         )
 
         table.bind(
@@ -1483,17 +2029,46 @@ class HSEPocket(App):
             "EVIDENCE"
         ]
 
+        # Keep table inside screen.
+        # Equal-width columns, with vertical text wrapping.
         for header in headers:
 
-            table.add_widget(
-                make_label(
-                    header,
-                    9,
-                    WHITE,
-                    True,
-                    42
+            cell = Label(
+                text=header,
+                size_hint_x=1,
+                size_hint_y=None,
+                height=dp(45),
+                font_size=dp(8),
+                color=WHITE,
+                bold=True,
+                halign="center",
+                valign="middle"
+            )
+
+            cell.bind(
+                size=lambda obj, value:
+                setattr(
+                    obj,
+                    "text_size",
+                    value
                 )
             )
+
+            with cell.canvas.before:
+                Color(*NAVY)
+                rect = RoundedRectangle(
+                    pos=cell.pos,
+                    size=cell.size
+                )
+
+            cell.bind(
+                pos=lambda obj, value, r=rect:
+                setattr(r, "pos", value),
+                size=lambda obj, value, r=rect:
+                setattr(r, "size", value)
+            )
+
+            table.add_widget(cell)
 
         for row in rows:
 
@@ -1507,27 +2082,68 @@ class HSEPocket(App):
                 if index == 10:
 
                     value = (
-                        "ATTACHED"
+                        "YES"
                         if value
                         else "-"
                     )
 
-                table.add_widget(
-                    make_label(
-                        value,
-                        9,
-                        TEXT,
-                        False,
-                        75
+                cell = Label(
+                    text=str(value),
+                    size_hint_x=1,
+                    size_hint_y=None,
+                    height=dp(78),
+                    font_size=dp(8),
+                    color=TEXT,
+                    halign="left",
+                    valign="top"
+                )
+
+                cell.bind(
+                    size=lambda obj, value:
+                    setattr(
+                        obj,
+                        "text_size",
+                        (
+                            max(1, value[0] - dp(4)),
+                            max(1, value[1] - dp(4))
+                        )
                     )
                 )
+
+                with cell.canvas.before:
+                    Color(*WHITE)
+                    rect = RoundedRectangle(
+                        pos=cell.pos,
+                        size=cell.size
+                    )
+
+                cell.bind(
+                    pos=lambda obj, value, r=rect:
+                    setattr(r, "pos", value),
+                    size=lambda obj, value, r=rect:
+                    setattr(r, "size", value)
+                )
+
+                table.add_widget(cell)
+
+        if not rows:
+
+            empty = make_label(
+                "No observation records found.",
+                13,
+                MUTED,
+                False,
+                70
+            )
+
+            table.add_widget(empty)
 
         scroll.add_widget(table)
 
         box.add_widget(scroll)
 
         export_label = make_label(
-            "EXPORT REGISTER",
+            "EXPORT OBSERVATION REGISTER",
             12,
             NAVY,
             True,
@@ -1536,48 +2152,70 @@ class HSEPocket(App):
 
         box.add_widget(export_label)
 
-        export_row = BoxLayout(
+        export_row1 = BoxLayout(
             size_hint_y=None,
             height=dp(46),
             spacing=dp(5)
         )
 
         word_button = make_button(
-            "EXPORT WORD",
+            "WORD",
             BLUE,
             44,
             9
         )
 
         excel_button = make_button(
-            "EXPORT EXCEL",
+            "EXCEL",
             GREEN,
             44,
             9
         )
 
-        export_row.add_widget(
+        export_row1.add_widget(
             word_button
         )
 
-        export_row.add_widget(
+        export_row1.add_widget(
             excel_button
         )
 
-        box.add_widget(export_row)
+        box.add_widget(export_row1)
+
+        export_row2 = BoxLayout(
+            size_hint_y=None,
+            height=dp(46),
+            spacing=dp(5)
+        )
+
+        pdf_button = make_button(
+            "PDF",
+            RED,
+            44,
+            9
+        )
 
         close_button = make_button(
             "CLOSE",
             NAVY,
-            44
+            44,
+            9
         )
 
-        box.add_widget(close_button)
+        export_row2.add_widget(
+            pdf_button
+        )
+
+        export_row2.add_widget(
+            close_button
+        )
+
+        box.add_widget(export_row2)
 
         popup = Popup(
             title="Observation Register",
             content=box,
-            size_hint=(0.98, 0.96),
+            size_hint=(0.99, 0.97),
             auto_dismiss=False
         )
 
@@ -1593,6 +2231,11 @@ class HSEPocket(App):
         excel_button.bind(
             on_release=lambda _:
             self.export_observations_excel()
+        )
+
+        pdf_button.bind(
+            on_release=lambda _:
+            self.export_observations_pdf()
         )
 
         popup.open()
@@ -1612,183 +2255,13 @@ class HSEPocket(App):
         )
 
     # ========================================================
-    # WORD EXPORT - RTF
-    #
-    # RTF is opened directly by Microsoft Word.
-    # Landscape page.
-    # Row height = 2 inches = 2880 twips.
+    # RTF HELPERS
     # ========================================================
 
-    def export_observations_word(self):
-
-        rows = self.db.observation_rows()
-
-        if not rows:
-
-            show_message(
-                "Export",
-                "No observation records available."
-            )
-
-            return
-
-        company, project, logo = (
-            self.report_header_text()
-        )
-
-        path = os.path.join(
-            self.app_directory,
-            "Observation_Register_"
-            + datetime.now().strftime(
-                "%Y%m%d_%H%M%S"
-            )
-            + ".rtf"
-        )
-
-        with open(
-            path,
-            "w",
-            encoding="utf-8"
-        ) as file:
-
-            file.write(
-                r"{\rtf1\ansi\deff0"
-            )
-
-            # Landscape A4
-            file.write(
-                r"\paperw16840\paperh11900"
-            )
-
-            file.write(
-                r"\margl500\margr500\margt500\margb500"
-            )
-
-            file.write(
-                r"\fs28\b HSE-POCKET\b0\par"
-            )
-
-            if company:
-
-                file.write(
-                    self.rtf_escape(
-                        company
-                    )
-                    + r"\par"
-                )
-
-            if project:
-
-                file.write(
-                    self.rtf_escape(
-                        project
-                    )
-                    + r"\par"
-                )
-
-            file.write(
-                r"\fs20 Observation Register\par\par"
-            )
-
-            headers = [
-                "ID",
-                "Date",
-                "Location",
-                "Responsible",
-                "Type",
-                "Category",
-                "Observation",
-                "Action",
-                "Status",
-                "Observed By",
-                "Photo",
-                "Evidence"
-            ]
-
-            widths = self.rtf_widths(
-                headers,
-                rows
-            )
-
-            file.write(
-                r"\trowd\trrh-2880"
-            )
-
-            position = 0
-
-            for width in widths:
-
-                position += width
-
-                file.write(
-                    r"\cellx%d" % position
-                )
-
-            for header in headers:
-
-                file.write(
-                    r"\pard\intbl\b "
-                    + self.rtf_escape(header)
-                    + r"\b0\cell"
-                )
-
-            file.write(
-                r"\row"
-            )
-
-            for row in rows:
-
-                file.write(
-                    r"\trowd\trrh-2880"
-                )
-
-                position = 0
-
-                for width in widths:
-
-                    position += width
-
-                    file.write(
-                        r"\cellx%d"
-                        % position
-                    )
-
-                for index, value in enumerate(row):
-
-                    if value is None:
-                        value = ""
-
-                    if index == 10:
-
-                        value = (
-                            "ATTACHED"
-                            if value
-                            else "-"
-                        )
-
-                    file.write(
-                        r"\pard\intbl "
-                        + self.rtf_escape(
-                            str(value)
-                        )
-                        + r"\cell"
-                    )
-
-                file.write(
-                    r"\row"
-                )
-
-            file.write(
-                r"}"
-            )
-
-        show_message(
-            "WORD EXPORT",
-            "Word-compatible report created:\n\n"
-            + path
-        )
-
-    def rtf_escape(self, value):
+    def rtf_escape(
+        self,
+        value
+    ):
 
         value = str(value)
 
@@ -1808,16 +2281,100 @@ class HSEPocket(App):
         )
 
         value = value.replace(
+            "\r",
+            ""
+        )
+
+        value = value.replace(
             "\n",
             "\\line "
         )
 
-        return value
+        # Convert non-ASCII characters into RTF Unicode
+        result = ""
 
-    def rtf_widths(self, headers, rows):
+        for char in value:
 
-        # Landscape width around 10.8 inches.
-        total_width = 15500
+            code = ord(char)
+
+            if code > 127:
+
+                if code > 32767:
+                    code -= 65536
+
+                result += (
+                    "\\u%d?"
+                    % code
+                )
+
+            else:
+
+                result += char
+
+        return result
+
+    def image_rtf(
+        self,
+        path
+    ):
+
+        if not path:
+            return ""
+
+        if not os.path.exists(path):
+            return ""
+
+        try:
+
+            with open(
+                path,
+                "rb"
+            ) as image_file:
+
+                data = image_file.read()
+
+            if not data:
+                return ""
+
+            extension = (
+                os.path.splitext(path)[1]
+                .lower()
+            )
+
+            if extension in [
+                ".jpg",
+                ".jpeg"
+            ]:
+
+                control = "\\jpegblip"
+
+            else:
+
+                control = "\\pngblip"
+
+            hex_data = (
+                data.hex()
+            )
+
+            return (
+                "{\\pict"
+                + control
+                + "\\picwgoal3000"
+                + "\\pichgoal1800 "
+                + hex_data
+                + "}"
+            )
+
+        except Exception:
+            return ""
+
+    def rtf_widths(
+        self,
+        headers,
+        rows
+    ):
+
+        total_width = 15000
 
         weights = []
 
@@ -1839,45 +2396,50 @@ class HSEPocket(App):
                         len(str(value))
                     )
 
-            # Keep extremely long text from taking
-            # the entire page.
             longest = min(
                 longest,
                 65
             )
 
             weights.append(
-                max(5, longest)
+                max(
+                    5,
+                    longest
+                )
             )
 
         total = sum(weights)
 
         return [
-            int(
-                total_width
-                * weight
-                / total
+            max(
+                400,
+                int(
+                    total_width
+                    * weight
+                    / total
+                )
             )
             for weight in weights
         ]
 
     # ========================================================
-    # EXCEL EXPORT
+    # WORD EXPORT
     #
-    # HTML spreadsheet is saved as .xls.
-    # Microsoft Excel opens this directly.
-    # Row height = 2 inches = 144 points.
-    # Column width adapts to text.
+    # Word-compatible RTF saved as .doc
+    # Landscape
+    # 2-inch row height
+    # Dynamic column widths
+    # Company / project / logo
     # ========================================================
 
-    def export_observations_excel(self):
+    def export_observations_word(self):
 
         rows = self.db.observation_rows()
 
         if not rows:
 
             show_message(
-                "Export",
+                "WORD EXPORT",
                 "No observation records available."
             )
 
@@ -1887,13 +2449,19 @@ class HSEPocket(App):
             self.report_header_text()
         )
 
-        path = os.path.join(
-            self.app_directory,
+        timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S"
+        )
+
+        filename = (
             "Observation_Register_"
-            + datetime.now().strftime(
-                "%Y%m%d_%H%M%S"
-            )
-            + ".xls"
+            + timestamp
+            + ".doc"
+        )
+
+        path = os.path.join(
+            self.export_directory,
+            filename
         )
 
         headers = [
@@ -1911,74 +2479,273 @@ class HSEPocket(App):
             "Evidence"
         ]
 
-        with open(
-            path,
-            "w",
-            encoding="utf-8"
-        ) as file:
+        try:
 
-            file.write(
-                "<html><head>"
-                "<meta charset='utf-8'>"
-                "<style>"
-                "body{font-family:Arial;}"
-                "table{border-collapse:collapse;}"
-                "th{background:#0b2745;color:white;"
-                "border:1px solid #777;padding:6px;}"
-                "td{border:1px solid #777;"
-                "padding:5px;vertical-align:top;"
-                "height:144pt;}"
-                "</style></head><body>"
-            )
-
-            file.write(
-                "<h2>HSE-POCKET</h2>"
-            )
-
-            if company:
+            with open(
+                path,
+                "w",
+                encoding="utf-8"
+            ) as file:
 
                 file.write(
-                    "<h3>%s</h3>"
-                    % html.escape(company)
+                    "{\\rtf1\\ansi\\deff0"
                 )
 
-            if project:
+                # A4 landscape
+                file.write(
+                    "\\paperw16840\\paperh11900"
+                )
 
                 file.write(
-                    "<h3>%s</h3>"
-                    % html.escape(project)
+                    "\\landscape"
                 )
-
-            file.write(
-                "<h3>Observation Register</h3>"
-            )
-
-            file.write(
-                "<table>"
-            )
-
-            file.write(
-                "<tr>"
-            )
-
-            for header in headers:
 
                 file.write(
-                    "<th>%s</th>"
-                    % html.escape(header)
+                    "\\margl500\\margr500"
+                    "\\margt500\\margb500"
                 )
 
-            file.write(
-                "</tr>"
-            )
+                # Header
+                file.write(
+                    "\\fs30\\b "
+                    + self.rtf_escape(
+                        "HSE-POCKET"
+                    )
+                    + "\\b0\\par"
+                )
 
-            for row in rows:
+                if company:
+
+                    file.write(
+                        "\\fs24\\b "
+                        + self.rtf_escape(
+                            company
+                        )
+                        + "\\b0\\par"
+                    )
+
+                if project:
+
+                    file.write(
+                        "\\fs22 "
+                        + self.rtf_escape(
+                            project
+                        )
+                        + "\\par"
+                    )
+
+                # Logo
+                logo_rtf = self.image_rtf(
+                    logo
+                )
+
+                if logo_rtf:
+
+                    file.write(
+                        logo_rtf
+                        + "\\par"
+                    )
 
                 file.write(
-                    "<tr>"
+                    "\\fs24\\b "
+                    + self.rtf_escape(
+                        "Observation Register"
+                    )
+                    + "\\b0\\par"
                 )
 
-                for index, value in enumerate(row):
+                file.write(
+                    "\\fs18 Generated: "
+                    + self.rtf_escape(
+                        now()
+                    )
+                    + "\\par\\par"
+                )
+
+                widths = self.rtf_widths(
+                    headers,
+                    rows
+                )
+
+                # Header row
+                file.write(
+                    "\\trowd\\trrh-2880"
+                )
+
+                position = 0
+
+                for width in widths:
+
+                    position += width
+
+                    file.write(
+                        "\\cellx%d"
+                        % position
+                    )
+
+                for header in headers:
+
+                    file.write(
+                        "\\pard\\intbl\\fs16\\b "
+                        + self.rtf_escape(
+                            header
+                        )
+                        + "\\b0\\cell"
+                    )
+
+                file.write(
+                    "\\row"
+                )
+
+                # Data
+                for row in rows:
+
+                    file.write(
+                        "\\trowd\\trrh-2880"
+                    )
+
+                    position = 0
+
+                    for width in widths:
+
+                        position += width
+
+                        file.write(
+                            "\\cellx%d"
+                            % position
+                        )
+
+                    for index, value in enumerate(row):
+
+                        if value is None:
+                            value = ""
+
+                        if index == 10:
+
+                            value = (
+                                "ATTACHED"
+                                if value
+                                else "-"
+                            )
+
+                        file.write(
+                            "\\pard\\intbl\\fs16 "
+                            + self.rtf_escape(
+                                str(value)
+                            )
+                            + "\\cell"
+                        )
+
+                    file.write(
+                        "\\row"
+                    )
+
+                file.write(
+                    "}"
+                )
+
+            if not os.path.exists(path):
+
+                show_message(
+                    "WORD EXPORT",
+                    "Word file was not created."
+                )
+
+                return
+
+            if os.path.getsize(path) <= 0:
+
+                show_message(
+                    "WORD EXPORT",
+                    "Word file is empty."
+                )
+
+                return
+
+            # Open Android Save As
+            self.save_export_to_android(
+                path,
+                filename,
+                "application/msword"
+            )
+
+        except Exception as error:
+
+            show_message(
+                "WORD EXPORT ERROR",
+                str(error)
+            )
+
+    # ========================================================
+    # EXCEL EXPORT
+    #
+    # HTML spreadsheet saved as .xls
+    # Excel compatible
+    # Landscape
+    # 2-inch row height
+    # Dynamic column widths
+    # Company / project / logo
+    # ========================================================
+
+    def export_observations_excel(self):
+
+        rows = self.db.observation_rows()
+
+        if not rows:
+
+            show_message(
+                "EXCEL EXPORT",
+                "No observation records available."
+            )
+
+            return
+
+        company, project, logo = (
+            self.report_header_text()
+        )
+
+        timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S"
+        )
+
+        filename = (
+            "Observation_Register_"
+            + timestamp
+            + ".xls"
+        )
+
+        path = os.path.join(
+            self.export_directory,
+            filename
+        )
+
+        headers = [
+            "ID",
+            "Date",
+            "Location",
+            "Responsible",
+            "Type",
+            "Category",
+            "Observation",
+            "Action",
+            "Status",
+            "Observed By",
+            "Photo",
+            "Evidence"
+        ]
+
+        try:
+
+            # Determine widths from text
+            widths = []
+
+            for index, header in enumerate(headers):
+
+                longest = len(header)
+
+                for row in rows:
+
+                    value = row[index]
 
                     if value is None:
                         value = ""
@@ -1991,33 +2758,1000 @@ class HSEPocket(App):
                             else "-"
                         )
 
-                    text = html.escape(
-                        str(value)
+                    longest = max(
+                        longest,
+                        len(str(value))
                     )
 
-                    text = text.replace(
-                        "\n",
-                        "<br>"
+                widths.append(
+                    min(
+                        55,
+                        max(
+                            10,
+                            longest
+                        )
                     )
+                )
+
+            logo_html = ""
+
+            if logo and os.path.exists(logo):
+
+                try:
+
+                    with open(
+                        logo,
+                        "rb"
+                    ) as image_file:
+
+                        encoded = base64.b64encode(
+                            image_file.read()
+                        ).decode(
+                            "ascii"
+                        )
+
+                    mime = (
+                        mimetypes.guess_type(
+                            logo
+                        )[0]
+                        or "image/png"
+                    )
+
+                    logo_html = (
+                        "<div>"
+                        "<img src='data:%s;base64,%s' "
+                        "style='max-height:100px;'>"
+                        "</div>"
+                        % (
+                            mime,
+                            encoded
+                        )
+                    )
+
+                except Exception:
+                    logo_html = ""
+
+            with open(
+                path,
+                "w",
+                encoding="utf-8"
+            ) as file:
+
+                file.write(
+                    "<html>"
+                    "<head>"
+                    "<meta charset='utf-8'>"
+                    "<style>"
+                    "@page{size:landscape;"
+                    "margin:0.35in;}"
+                    "body{font-family:Arial;"
+                    "font-size:10pt;}"
+                    "table{border-collapse:collapse;"
+                    "width:100%;}"
+                    "th{background:#0b2745;"
+                    "color:white;"
+                    "border:1px solid #555;"
+                    "padding:5px;"
+                    "text-align:center;}"
+                    "td{border:1px solid #777;"
+                    "padding:5px;"
+                    "vertical-align:top;"
+                    "height:144pt;"
+                    "mso-height-source:userset;}"
+                    ".title{font-size:18pt;"
+                    "font-weight:bold;}"
+                    ".company{font-size:14pt;"
+                    "font-weight:bold;}"
+                    ".project{font-size:12pt;}"
+                    "</style>"
+                    "</head>"
+                    "<body>"
+                )
+
+                file.write(
+                    "<div class='title'>"
+                    "HSE-POCKET"
+                    "</div>"
+                )
+
+                if company:
 
                     file.write(
-                        "<td>%s</td>"
-                        % text
+                        "<div class='company'>"
+                        + html.escape(company)
+                        + "</div>"
+                    )
+
+                if project:
+
+                    file.write(
+                        "<div class='project'>"
+                        + html.escape(project)
+                        + "</div>"
+                    )
+
+                file.write(
+                    logo_html
+                )
+
+                file.write(
+                    "<h3>Observation Register</h3>"
+                )
+
+                file.write(
+                    "<p>Generated: "
+                    + html.escape(now())
+                    + "</p>"
+                )
+
+                file.write(
+                    "<table>"
+                )
+
+                # Column widths
+                file.write(
+                    "<colgroup>"
+                )
+
+                for width in widths:
+
+                    file.write(
+                        "<col style='width:%dch;'>"
+                        % width
+                    )
+
+                file.write(
+                    "</colgroup>"
+                )
+
+                file.write(
+                    "<tr>"
+                )
+
+                for header in headers:
+
+                    file.write(
+                        "<th>"
+                        + html.escape(header)
+                        + "</th>"
                     )
 
                 file.write(
                     "</tr>"
                 )
 
-            file.write(
-                "</table></body></html>"
+                for row in rows:
+
+                    file.write(
+                        "<tr>"
+                    )
+
+                    for index, value in enumerate(row):
+
+                        if value is None:
+                            value = ""
+
+                        if index == 10:
+
+                            value = (
+                                "ATTACHED"
+                                if value
+                                else "-"
+                            )
+
+                        text = html.escape(
+                            str(value)
+                        )
+
+                        text = text.replace(
+                            "\n",
+                            "<br>"
+                        )
+
+                        file.write(
+                            "<td>"
+                            + text
+                            + "</td>"
+                        )
+
+                    file.write(
+                        "</tr>"
+                    )
+
+                file.write(
+                    "</table>"
+                    "</body>"
+                    "</html>"
+                )
+
+            if not os.path.exists(path):
+
+                show_message(
+                    "EXCEL EXPORT",
+                    "Excel file was not created."
+                )
+
+                return
+
+            if os.path.getsize(path) <= 0:
+
+                show_message(
+                    "EXCEL EXPORT",
+                    "Excel file is empty."
+                )
+
+                return
+
+            self.save_export_to_android(
+                path,
+                filename,
+                "application/vnd.ms-excel"
             )
 
-        show_message(
-            "EXCEL EXPORT",
-            "Excel-compatible report created:\n\n"
-            + path
+        except Exception as error:
+
+            show_message(
+                "EXCEL EXPORT ERROR",
+                str(error)
+            )
+
+    # ========================================================
+    # PDF HELPERS
+    #
+    # Pure Python PDF.
+    # No reportlab dependency.
+    # ========================================================
+
+    def pdf_escape(
+        self,
+        value
+    ):
+
+        value = str(value)
+
+        value = value.replace(
+            "\\",
+            "\\\\"
         )
+
+        value = value.replace(
+            "(",
+            "\\("
+        )
+
+        value = value.replace(
+            ")",
+            "\\)"
+        )
+
+        value = value.replace(
+            "\r",
+            ""
+        )
+
+        return value
+
+    def pdf_wrap(
+        self,
+        text,
+        width
+    ):
+
+        text = str(text or "")
+
+        words = text.replace(
+            "\n",
+            " "
+        ).split()
+
+        if not words:
+            return [""]
+
+        lines = []
+        current = ""
+
+        for word in words:
+
+            if len(word) > width:
+
+                if current:
+
+                    lines.append(
+                        current
+                    )
+
+                    current = ""
+
+                while len(word) > width:
+
+                    lines.append(
+                        word[:width]
+                    )
+
+                    word = word[width:]
+
+                current = word
+
+            else:
+
+                test = (
+                    word
+                    if not current
+                    else
+                    current + " " + word
+                )
+
+                if len(test) <= width:
+
+                    current = test
+
+                else:
+
+                    lines.append(
+                        current
+                    )
+
+                    current = word
+
+        if current:
+            lines.append(current)
+
+        return lines
+
+    def create_pdf(
+        self,
+        rows,
+        path,
+        company,
+        project
+    ):
+
+        headers = [
+            "ID",
+            "Date",
+            "Location",
+            "Responsible",
+            "Type",
+            "Category",
+            "Observation",
+            "Action",
+            "Status",
+            "Observed By",
+            "Photo",
+            "Evidence"
+        ]
+
+        # Landscape A4 in points
+        page_width = 841.89
+        page_height = 595.28
+
+        margin = 18
+        usable_width = (
+            page_width
+            - (margin * 2)
+        )
+
+        # Column weights
+        weights = [
+            4,
+            9,
+            12,
+            11,
+            9,
+            11,
+            25,
+            20,
+            8,
+            11,
+            7,
+            15
+        ]
+
+        weight_total = sum(weights)
+
+        col_widths = [
+            usable_width
+            * weight
+            / weight_total
+            for weight in weights
+        ]
+
+        pages = []
+
+        current_commands = []
+        current_y = page_height - margin
+
+        def start_page():
+
+            nonlocal current_commands
+            nonlocal current_y
+
+            current_commands = []
+
+            current_y = (
+                page_height
+                - margin
+            )
+
+            current_commands.append(
+                "BT"
+            )
+
+            current_commands.append(
+                "/F1 16 Tf"
+            )
+
+            current_commands.append(
+                "1 0 0 1 %s %s Tm"
+                % (
+                    margin,
+                    current_y
+                )
+            )
+
+            current_commands.append(
+                "("
+                + self.pdf_escape(
+                    "HSE-POCKET"
+                )
+                + ") Tj"
+            )
+
+            current_commands.append(
+                "/F1 9 Tf"
+            )
+
+            current_y -= 17
+
+            if company:
+
+                current_commands.append(
+                    "1 0 0 1 %s %s Tm"
+                    % (
+                        margin,
+                        current_y
+                    )
+                )
+
+                current_commands.append(
+                    "("
+                    + self.pdf_escape(
+                        company
+                    )
+                    + ") Tj"
+                )
+
+                current_y -= 13
+
+            if project:
+
+                current_commands.append(
+                    "1 0 0 1 %s %s Tm"
+                    % (
+                        margin,
+                        current_y
+                    )
+                )
+
+                current_commands.append(
+                    "("
+                    + self.pdf_escape(
+                        project
+                    )
+                    + ") Tj"
+                )
+
+                current_y -= 13
+
+            current_commands.append(
+                "1 0 0 1 %s %s Tm"
+                % (
+                    margin,
+                    current_y
+                )
+            )
+
+            current_commands.append(
+                "("
+                + self.pdf_escape(
+                    "Observation Register"
+                )
+                + ") Tj"
+            )
+
+            current_y -= 20
+
+            current_commands.append(
+                "1 0 0 1 %s %s Tm"
+                % (
+                    margin,
+                    current_y
+                )
+            )
+
+            current_commands.append(
+                "("
+                + self.pdf_escape(
+                    "Generated: " + now()
+                )
+                + ") Tj"
+            )
+
+            current_y -= 22
+
+            current_commands.append(
+                "ET"
+            )
+
+        def finish_page():
+
+            nonlocal current_commands
+
+            if current_commands:
+
+                pages.append(
+                    "\n".join(
+                        current_commands
+                    )
+                )
+
+        def draw_text(
+            x,
+            y,
+            text,
+            font_size=6
+        ):
+
+            current_commands.append(
+                "BT"
+            )
+
+            current_commands.append(
+                "/F1 %d Tf"
+                % font_size
+            )
+
+            current_commands.append(
+                "1 0 0 1 %.2f %.2f Tm"
+                % (
+                    x,
+                    y
+                )
+            )
+
+            current_commands.append(
+                "("
+                + self.pdf_escape(
+                    text
+                )
+                + ") Tj"
+            )
+
+            current_commands.append(
+                "ET"
+            )
+
+        def draw_header():
+
+            x = margin
+
+            top = current_y
+
+            for index, header in enumerate(headers):
+
+                width = col_widths[index]
+
+                current_commands.append(
+                    "%.2f %.2f %.2f %.2f re S"
+                    % (
+                        x,
+                        top - 18,
+                        width,
+                        18
+                    )
+                )
+
+                lines = self.pdf_wrap(
+                    header,
+                    max(
+                        5,
+                        int(
+                            width / 4.5
+                        )
+                    )
+                )
+
+                draw_text(
+                    x + 2,
+                    top - 11,
+                    lines[0],
+                    5
+                )
+
+                x += width
+
+            return top - 18
+
+        start_page()
+
+        current_y = draw_header()
+
+        for row in rows:
+
+            # Two-inch row requested for Word/Excel.
+            # PDF uses compact rows so the PDF remains usable.
+            row_height = 34
+
+            if current_y - row_height < margin + 25:
+
+                finish_page()
+
+                start_page()
+
+                current_y = draw_header()
+
+            x = margin
+
+            max_lines = 1
+
+            wrapped_cells = []
+
+            for index, value in enumerate(row):
+
+                if value is None:
+                    value = ""
+
+                if index == 10:
+
+                    value = (
+                        "ATTACHED"
+                        if value
+                        else "-"
+                    )
+
+                cell_lines = self.pdf_wrap(
+                    value,
+                    max(
+                        5,
+                        int(
+                            col_widths[index]
+                            / 4.5
+                        )
+                    )
+                )
+
+                cell_lines = cell_lines[:4]
+
+                wrapped_cells.append(
+                    cell_lines
+                )
+
+                max_lines = max(
+                    max_lines,
+                    len(cell_lines)
+                )
+
+            row_height = max(
+                34,
+                max_lines * 8 + 8
+            )
+
+            if current_y - row_height < margin:
+
+                finish_page()
+
+                start_page()
+
+                current_y = draw_header()
+
+            for index, lines in enumerate(
+                wrapped_cells
+            ):
+
+                width = col_widths[index]
+
+                current_commands.append(
+                    "%.2f %.2f %.2f %.2f re S"
+                    % (
+                        x,
+                        current_y - row_height,
+                        width,
+                        row_height
+                    )
+                )
+
+                line_y = (
+                    current_y - 10
+                )
+
+                for line in lines:
+
+                    draw_text(
+                        x + 2,
+                        line_y,
+                        line,
+                        5
+                    )
+
+                    line_y -= 7
+
+                x += width
+
+            current_y -= row_height
+
+        finish_page()
+
+        # ----------------------------------------------------
+        # Build PDF objects
+        # ----------------------------------------------------
+
+        objects = []
+
+        objects.append(
+            "<< /Type /Catalog /Pages 2 0 R >>"
+        )
+
+        page_numbers = []
+
+        # Pages object later
+        objects.append("")
+
+        # Font
+        objects.append(
+            "<< /Type /Font "
+            "/Subtype /Type1 "
+            "/BaseFont /Helvetica >>"
+        )
+
+        for content in pages:
+
+            content_bytes = content.encode(
+                "latin-1",
+                "replace"
+            )
+
+            stream = (
+                "<< /Length %d >>\n"
+                "stream\n"
+                % len(content_bytes)
+            )
+
+            stream += content
+
+            stream += (
+                "\nendstream"
+            )
+
+            objects.append(
+                stream
+            )
+
+        # Page objects
+        first_content_object = 4
+
+        for index in range(
+            len(pages)
+        ):
+
+            content_object = (
+                first_content_object
+                + index
+            )
+
+            page_object = (
+                4
+                + len(pages)
+                + index
+            )
+
+            page_numbers.append(
+                page_object
+            )
+
+            objects.append(
+                "<< /Type /Page "
+                "/Parent 2 0 R "
+                "/MediaBox [0 0 %.2f %.2f] "
+                "/Resources << /Font << "
+                "/F1 3 0 R >> >> "
+                "/Contents %d 0 R >>"
+                % (
+                    page_width,
+                    page_height,
+                    content_object
+                )
+            )
+
+        # Pages object
+        kids = " ".join(
+            "%d 0 R"
+            % number
+            for number in page_numbers
+        )
+
+        objects[1] = (
+            "<< /Type /Pages "
+            "/Kids [%s] "
+            "/Count %d >>"
+            % (
+                kids,
+                len(page_numbers)
+            )
+        )
+
+        # Write file
+        with open(
+            path,
+            "wb"
+        ) as file:
+
+            file.write(
+                b"%PDF-1.4\n"
+            )
+
+            offsets = [
+                0
+            ]
+
+            for number, obj in enumerate(
+                objects,
+                start=1
+            ):
+
+                offsets.append(
+                    file.tell()
+                )
+
+                file.write(
+                    ("%d 0 obj\n"
+                     % number).encode(
+                        "ascii"
+                    )
+                )
+
+                if isinstance(
+                    obj,
+                    str
+                ):
+
+                    file.write(
+                        obj.encode(
+                            "latin-1",
+                            "replace"
+                        )
+                    )
+
+                else:
+
+                    file.write(
+                        obj
+                    )
+
+                file.write(
+                    b"\nendobj\n"
+                )
+
+            xref = file.tell()
+
+            file.write(
+                (
+                    "xref\n"
+                    "0 %d\n"
+                    % (
+                        len(objects) + 1
+                    )
+                ).encode(
+                    "ascii"
+                )
+            )
+
+            file.write(
+                b"0000000000 65535 f \n"
+            )
+
+            for offset in offsets[1:]:
+
+                file.write(
+                    (
+                        "%010d 00000 n \n"
+                        % offset
+                    ).encode(
+                        "ascii"
+                    )
+                )
+
+            file.write(
+                (
+                    "trailer\n"
+                    "<< /Size %d "
+                    "/Root 1 0 R >>\n"
+                    "startxref\n"
+                    "%d\n"
+                    "%%%%EOF"
+                    % (
+                        len(objects) + 1,
+                        xref
+                    )
+                ).encode(
+                    "ascii"
+                )
+            )
+
+    # ========================================================
+    # PDF EXPORT
+    # ========================================================
+
+    def export_observations_pdf(self):
+
+        rows = self.db.observation_rows()
+
+        if not rows:
+
+            show_message(
+                "PDF EXPORT",
+                "No observation records available."
+            )
+
+            return
+
+        company, project, logo = (
+            self.report_header_text()
+        )
+
+        timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S"
+        )
+
+        filename = (
+            "Observation_Register_"
+            + timestamp
+            + ".pdf"
+        )
+
+        path = os.path.join(
+            self.export_directory,
+            filename
+        )
+
+        try:
+
+            self.create_pdf(
+                rows,
+                path,
+                company,
+                project
+            )
+
+            if not os.path.exists(path):
+
+                show_message(
+                    "PDF EXPORT",
+                    "PDF file was not created."
+                )
+
+                return
+
+            if os.path.getsize(path) <= 0:
+
+                show_message(
+                    "PDF EXPORT",
+                    "PDF file is empty."
+                )
+
+                return
+
+            self.save_export_to_android(
+                path,
+                filename,
+                "application/pdf"
+            )
+
+        except Exception as error:
+
+            show_message(
+                "PDF EXPORT ERROR",
+                str(error)
+            )
 
     # ========================================================
     # SETTINGS
@@ -2039,7 +3773,7 @@ class HSEPocket(App):
 
         grid.add_widget(
             make_label(
-                "These details are automatically used in future exported reports.",
+                "Project name, company name and logo are used in exported reports.",
                 11,
                 MUTED,
                 False,
@@ -2138,7 +3872,7 @@ class HSEPocket(App):
 
         grid.add_widget(
             make_label(
-                "The company name, project name and logo are stored locally on this device.",
+                "The selected logo is copied into the app storage and remains available for reports.",
                 11,
                 MUTED,
                 False,
@@ -2170,19 +3904,21 @@ class HSEPocket(App):
     def save_settings(self):
 
         self.db.save_settings(
-            self.settings_project.text,
-            self.settings_company.text,
-            self.settings_logo.text
+            self.settings_project.text.strip(),
+            self.settings_company.text.strip(),
+            self.settings_logo.text.strip()
         )
+
+        self.refresh_dashboard()
 
         show_message(
             "Settings Saved",
-            "Project name, company name and logo settings saved."
+            "Project name, company name and logo settings saved successfully."
         )
 
     # ========================================================
     # INCIDENT
-    # Existing feature retained
+    # Existing features retained
     # ========================================================
 
     def incidents(self):
@@ -2543,6 +4279,7 @@ class HSEPocket(App):
             return
 
         def v(name):
+
             return getattr(
                 self,
                 name
@@ -2554,62 +4291,104 @@ class HSEPocket(App):
             "location": v("inc_location"),
             "project": v("inc_project"),
             "activity": v("inc_activity"),
-            "classification": self.inc_classification.text,
-            "severity": self.inc_severity.text,
+            "classification":
+                self.inc_classification.text,
+            "severity":
+                self.inc_severity.text,
             "title": v("inc_title"),
             "description": v("inc_description"),
-            "consequence": v("inc_consequence"),
-            "potential_consequence": v("inc_potential"),
+            "consequence":
+                v("inc_consequence"),
+            "potential_consequence":
+                v("inc_potential"),
             "people": v("inc_people"),
             "injury": v("inc_injury"),
             "damage": v("inc_damage"),
-            "environment": v("inc_environment"),
-            "witnesses": v("inc_witnesses"),
-            "immediate": v("inc_immediate"),
-            "evidence": v("inc_evidence"),
-            "investigator": v("inc_investigator"),
+            "environment":
+                v("inc_environment"),
+            "witnesses":
+                v("inc_witnesses"),
+            "immediate":
+                v("inc_immediate"),
+            "evidence":
+                v("inc_evidence"),
+            "investigator":
+                v("inc_investigator"),
             "team": v("inc_team"),
             "scope": v("inc_scope"),
             "timeline": v("inc_timeline"),
-            "statements": v("inc_statements"),
-            "icam_event": v("icam_event"),
-            "icam_individual": v("icam_individual"),
-            "icam_task": v("icam_task"),
-            "icam_org": v("icam_org"),
-            "icam_defences": v("icam_defences"),
-            "icam_actions": v("icam_actions"),
-            "rca_method": self.rca_method.text,
-            "direct_cause": v("direct_cause"),
-            "underlying_cause": v("underlying_cause"),
-            "root_cause": v("root_cause"),
-            "contributing": v("contributing"),
-            "five_whys": v("five_whys"),
-            "fishbone": v("fishbone"),
-            "bowtie": v("bowtie"),
-            "corrective": v("inc_corrective"),
-            "preventive": v("inc_preventive"),
-            "system_action": v("inc_system"),
-            "responsible": v("inc_responsible"),
-            "target": v("inc_target"),
-            "priority": self.inc_priority.text,
-            "status": self.inc_status.text,
-            "verification": v("inc_verification"),
-            "closeout": v("inc_closeout"),
+            "statements":
+                v("inc_statements"),
+            "icam_event":
+                v("icam_event"),
+            "icam_individual":
+                v("icam_individual"),
+            "icam_task":
+                v("icam_task"),
+            "icam_org":
+                v("icam_org"),
+            "icam_defences":
+                v("icam_defences"),
+            "icam_actions":
+                v("icam_actions"),
+            "rca_method":
+                self.rca_method.text,
+            "direct_cause":
+                v("direct_cause"),
+            "underlying_cause":
+                v("underlying_cause"),
+            "root_cause":
+                v("root_cause"),
+            "contributing":
+                v("contributing"),
+            "five_whys":
+                v("five_whys"),
+            "fishbone":
+                v("fishbone"),
+            "bowtie":
+                v("bowtie"),
+            "corrective":
+                v("inc_corrective"),
+            "preventive":
+                v("inc_preventive"),
+            "system_action":
+                v("inc_system"),
+            "responsible":
+                v("inc_responsible"),
+            "target":
+                v("inc_target"),
+            "priority":
+                self.inc_priority.text,
+            "status":
+                self.inc_status.text,
+            "verification":
+                v("inc_verification"),
+            "closeout":
+                v("inc_closeout"),
             "created_at": now()
         }
 
-        record_id = self.db.add(
-            "incidents",
-            data
-        )
+        try:
 
-        show_message(
-            "Saved",
-            "Incident investigation #%d saved."
-            % record_id
-        )
+            record_id = self.db.add(
+                "incidents",
+                data
+            )
 
-        self.refresh_dashboard()
+            self.refresh_dashboard()
+
+            show_message(
+                "Saved",
+                "Incident investigation #%d saved."
+                % record_id
+            )
+
+        except Exception as error:
+
+            show_message(
+                "Save Error",
+                str(error)
+            )
 
     # ========================================================
     # INSPECTIONS
@@ -2638,10 +4417,6 @@ class HSEPocket(App):
                 45
             )
         )
-
-        # ----------------------------------------------------
-        # HEADER INFORMATION
-        # ----------------------------------------------------
 
         grid.add_widget(
             make_label(
@@ -2705,10 +4480,6 @@ class HSEPocket(App):
 
             grid.add_widget(widget)
 
-        # ----------------------------------------------------
-        # GENERAL CHECKLIST
-        # ----------------------------------------------------
-
         grid.add_widget(
             make_label(
                 "CHECKLIST",
@@ -2728,10 +4499,6 @@ class HSEPocket(App):
         grid.add_widget(
             self.ins_checklist
         )
-
-        # ----------------------------------------------------
-        # FINDING TYPE
-        # ----------------------------------------------------
 
         grid.add_widget(
             make_label(
@@ -2772,10 +4539,6 @@ class HSEPocket(App):
         grid.add_widget(
             self.ins_good_practice
         )
-
-        # ----------------------------------------------------
-        # SAFETY ELEMENTS
-        # ----------------------------------------------------
 
         grid.add_widget(
             make_label(
@@ -2865,7 +4628,7 @@ class HSEPocket(App):
             True
         )
 
-        checkpoint_widgets = [
+        for widget in [
             self.ins_ppe,
             self.ins_excavation,
             self.ins_wah,
@@ -2879,14 +4642,9 @@ class HSEPocket(App):
             self.ins_vehicle,
             self.ins_environment,
             self.ins_emergency
-        ]
+        ]:
 
-        for widget in checkpoint_widgets:
             grid.add_widget(widget)
-
-        # ----------------------------------------------------
-        # FINDINGS
-        # ----------------------------------------------------
 
         grid.add_widget(
             make_label(
@@ -2948,10 +4706,6 @@ class HSEPocket(App):
             self.ins_status
         )
 
-        # ----------------------------------------------------
-        # PHOTO / EVIDENCE
-        # ----------------------------------------------------
-
         grid.add_widget(
             make_label(
                 "PHOTO / EVIDENCE",
@@ -3003,10 +4757,6 @@ class HSEPocket(App):
         grid.add_widget(
             self.ins_evidence
         )
-
-        # ----------------------------------------------------
-        # SAVE
-        # ----------------------------------------------------
 
         save = make_button(
             "SAVE INSPECTION",
@@ -3063,51 +4813,91 @@ class HSEPocket(App):
             return
 
         data = {
-            "date": self.ins_date.text,
-            "time": self.ins_time.text,
-            "location": self.ins_location.text,
-            "inspection_type": self.inspection_type.text,
-            "inspector": self.inspector.text,
-            "activity": self.ins_activity.text,
-            "checklist": self.ins_checklist.text,
-            "unsafe_acts": self.ins_unsafe_act.text,
-            "unsafe_conditions": self.ins_unsafe_condition.text,
-            "good_practices": self.ins_good_practice.text,
-            "ppe": self.ins_ppe.text,
-            "excavation": self.ins_excavation.text,
-            "wah": self.ins_wah.text,
-            "lifting": self.ins_lifting.text,
-            "scaffolding": self.ins_scaffolding.text,
-            "electrical": self.ins_electrical.text,
-            "confined_space": self.ins_confined.text,
-            "hot_work": self.ins_hotwork.text,
-            "fire": self.ins_fire.text,
-            "housekeeping": self.ins_housekeeping.text,
-            "vehicle": self.ins_vehicle.text,
-            "environment": self.ins_environment.text,
-            "emergency": self.ins_emergency.text,
-            "findings": self.ins_findings.text,
-            "actions": self.ins_actions.text,
-            "responsible": self.ins_responsible.text,
-            "target": self.ins_target.text,
-            "status": self.ins_status.text,
-            "evidence": self.ins_evidence.text,
-            "photo_path": self.ins_photo_path,
+            "date":
+                self.ins_date.text,
+            "time":
+                self.ins_time.text,
+            "location":
+                self.ins_location.text,
+            "inspection_type":
+                self.inspection_type.text,
+            "inspector":
+                self.inspector.text,
+            "activity":
+                self.ins_activity.text,
+            "checklist":
+                self.ins_checklist.text,
+            "unsafe_acts":
+                self.ins_unsafe_act.text,
+            "unsafe_conditions":
+                self.ins_unsafe_condition.text,
+            "good_practices":
+                self.ins_good_practice.text,
+            "ppe":
+                self.ins_ppe.text,
+            "excavation":
+                self.ins_excavation.text,
+            "wah":
+                self.ins_wah.text,
+            "lifting":
+                self.ins_lifting.text,
+            "scaffolding":
+                self.ins_scaffolding.text,
+            "electrical":
+                self.ins_electrical.text,
+            "confined_space":
+                self.ins_confined.text,
+            "hot_work":
+                self.ins_hotwork.text,
+            "fire":
+                self.ins_fire.text,
+            "housekeeping":
+                self.ins_housekeeping.text,
+            "vehicle":
+                self.ins_vehicle.text,
+            "environment":
+                self.ins_environment.text,
+            "emergency":
+                self.ins_emergency.text,
+            "findings":
+                self.ins_findings.text,
+            "actions":
+                self.ins_actions.text,
+            "responsible":
+                self.ins_responsible.text,
+            "target":
+                self.ins_target.text,
+            "status":
+                self.ins_status.text,
+            "evidence":
+                self.ins_evidence.text,
+            "photo_path":
+                self.ins_photo_path,
             "created_at": now()
         }
 
-        record_id = self.db.add(
-            "inspections",
-            data
-        )
+        try:
 
-        show_message(
-            "Inspection Saved",
-            "Inspection #%d saved successfully."
-            % record_id
-        )
+            record_id = self.db.add(
+                "inspections",
+                data
+            )
 
-        self.refresh_dashboard()
+            self.refresh_dashboard()
+
+            show_message(
+                "Inspection Saved",
+                "Inspection #%d saved successfully."
+                % record_id
+            )
+
+        except Exception as error:
+
+            show_message(
+                "Save Error",
+                "Inspection was not saved.\n\n"
+                + str(error)
+            )
 
     # ========================================================
     # AUDITS
@@ -3242,18 +5032,27 @@ class HSEPocket(App):
 
         data["created_at"] = now()
 
-        record_id = self.db.add(
-            "audits",
-            data
-        )
+        try:
 
-        show_message(
-            "Saved",
-            "Audit #%d saved."
-            % record_id
-        )
+            record_id = self.db.add(
+                "audits",
+                data
+            )
 
-        self.refresh_dashboard()
+            self.refresh_dashboard()
+
+            show_message(
+                "Saved",
+                "Audit #%d saved."
+                % record_id
+            )
+
+        except Exception as error:
+
+            show_message(
+                "Save Error",
+                str(error)
+            )
 
     # ========================================================
     # CAPA
@@ -3418,26 +5217,40 @@ class HSEPocket(App):
             )
 
         data.update({
-            "priority": self.capa_priority.text,
-            "status": self.capa_status.text,
-            "verification": self.capa_verification.text,
-            "closeout": self.capa_closeout.text,
-            "evidence": self.capa_evidence.text,
+            "priority":
+                self.capa_priority.text,
+            "status":
+                self.capa_status.text,
+            "verification":
+                self.capa_verification.text,
+            "closeout":
+                self.capa_closeout.text,
+            "evidence":
+                self.capa_evidence.text,
             "created_at": now()
         })
 
-        record_id = self.db.add(
-            "capa",
-            data
-        )
+        try:
 
-        show_message(
-            "Saved",
-            "CAPA #%d saved."
-            % record_id
-        )
+            record_id = self.db.add(
+                "capa",
+                data
+            )
 
-        self.refresh_dashboard()
+            self.refresh_dashboard()
+
+            show_message(
+                "Saved",
+                "CAPA #%d saved."
+                % record_id
+            )
+
+        except Exception as error:
+
+            show_message(
+                "Save Error",
+                str(error)
+            )
 
     # ========================================================
     # FILES
@@ -3543,21 +5356,36 @@ class HSEPocket(App):
 
             return
 
-        self.db.add(
-            "files",
-            {
-                "module": self.file_module.text,
-                "record_id": record_id,
-                "path": self.file_path.text,
-                "description": self.file_description.text,
-                "created_at": now()
-            }
-        )
+        try:
 
-        show_message(
-            "Saved",
-            "File reference saved."
-        )
+            self.db.add(
+                "files",
+                {
+                    "module":
+                        self.file_module.text,
+                    "record_id":
+                        record_id,
+                    "path":
+                        self.file_path.text,
+                    "description":
+                        self.file_description.text,
+                    "created_at": now()
+                }
+            )
+
+            self.refresh_dashboard()
+
+            show_message(
+                "Saved",
+                "File reference saved."
+            )
+
+        except Exception as error:
+
+            show_message(
+                "Save Error",
+                str(error)
+            )
 
     def view_files(self):
 
@@ -3604,9 +5432,14 @@ class HSEPocket(App):
     # GENERIC REGISTERS
     # ========================================================
 
-    def view_register(self, table):
+    def view_register(
+        self,
+        table
+    ):
 
-        rows = self.db.rows(table)
+        rows = self.db.rows(
+            table
+        )
 
         if not rows:
 
@@ -3641,7 +5474,8 @@ class HSEPocket(App):
             )
 
         show_message(
-            table.upper() + " REGISTER",
+            table.upper()
+            + " REGISTER",
             "\n\n----------------\n\n".join(
                 output
             )
@@ -3651,9 +5485,14 @@ class HSEPocket(App):
     # CSV
     # ========================================================
 
-    def export_csv(self, table):
+    def export_csv(
+        self,
+        table
+    ):
 
-        rows = self.db.rows(table)
+        rows = self.db.rows(
+            table
+        )
 
         if not rows:
 
@@ -3664,33 +5503,51 @@ class HSEPocket(App):
 
             return
 
-        path = os.path.join(
-            self.app_directory,
+        timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S"
+        )
+
+        filename = (
             table
             + "_register_"
-            + datetime.now().strftime(
-                "%Y%m%d_%H%M%S"
-            )
+            + timestamp
             + ".csv"
         )
 
-        with open(
-            path,
-            "w",
-            newline="",
-            encoding="utf-8-sig"
-        ) as file:
-
-            writer = csv.writer(file)
-
-            for row in rows:
-
-                writer.writerow(row)
-
-        show_message(
-            "EXPORT COMPLETE",
-            path
+        path = os.path.join(
+            self.export_directory,
+            filename
         )
+
+        try:
+
+            with open(
+                path,
+                "w",
+                newline="",
+                encoding="utf-8-sig"
+            ) as file:
+
+                writer = csv.writer(
+                    file
+                )
+
+                for row in rows:
+
+                    writer.writerow(row)
+
+            self.save_export_to_android(
+                path,
+                filename,
+                "text/csv"
+            )
+
+        except Exception as error:
+
+            show_message(
+                "EXPORT ERROR",
+                str(error)
+            )
 
     # ========================================================
     # APP CLOSE
@@ -3700,12 +5557,29 @@ class HSEPocket(App):
 
         try:
 
+            if self.android_activity_bound:
+
+                try:
+
+                    from android import activity
+
+                    activity.unbind(
+                        on_activity_result=
+                        self.on_activity_result
+                    )
+
+                except Exception:
+                    pass
+
             self.db.connection.close()
 
         except Exception:
-
             pass
 
+
+# ============================================================
+# START
+# ============================================================
 
 if __name__ == "__main__":
 
