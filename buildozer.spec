@@ -20,7 +20,9 @@ android.entrypoint = org.kivy.android.PythonActivity
 
 android.api = 35
 android.minapi = 24
+
 android.ndk = 28c
+
 android.archs = arm64-v8a
 
 android.sdk_path = /home/runner/.buildozer/android/platform/android-sdk
@@ -31,7 +33,6 @@ android.private_storage = True
 android.allow_backup = True
 
 android.accept_sdk_license = True
-android.skip_update = False
 
 android.logcat_filters = *:S python:D
 
