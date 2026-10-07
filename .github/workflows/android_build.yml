@@ -26,7 +26,7 @@ jobs:
 
 
       # =========================================================
-      # 2. PYTHON
+      # 2. PYTHON 3.11
       # =========================================================
 
       - name: Setup Python
@@ -47,10 +47,10 @@ jobs:
 
 
       # =========================================================
-      # 4. SYSTEM PACKAGES
+      # 4. SYSTEM DEPENDENCIES
       # =========================================================
 
-      - name: Install system packages
+      - name: Install system dependencies
         run: |
           sudo apt-get update
 
@@ -79,69 +79,7 @@ jobs:
 
 
       # =========================================================
-      # 5. BUILD TOOLS / ANDROID SDK LICENSES
-      # =========================================================
-
-      - name: Accept Android SDK licenses and install Build Tools
-        run: |
-          echo "=============================================="
-          echo "ANDROID SDK SETUP"
-          echo "=============================================="
-
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
-          if [ ! -f "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)"
-          fi
-
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager not found"
-            exit 1
-          fi
-
-          echo "Using sdkmanager:"
-          echo "$SDKMANAGER"
-
-          yes | "$SDKMANAGER" --licenses || true
-
-          "$SDKMANAGER" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;37.0.0"
-
-          echo "=============================================="
-          echo "BUILD TOOLS INSTALLED"
-          echo "=============================================="
-
-          ls -la "$ANDROID_HOME/build-tools"
-
-          test -d "$ANDROID_HOME/build-tools/37.0.0"
-
-          echo "Build Tools 37.0.0 found."
-
-
-      # =========================================================
-      # 6. FORCE SDK LICENSE ACCEPTANCE
-      # =========================================================
-
-      - name: Accept SDK licenses again
-        run: |
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
-          if [ ! -f "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)"
-          fi
-
-          yes | "$SDKMANAGER" --licenses
-
-          echo "Android SDK licenses accepted."
-
-
-      # =========================================================
-      # 7. PYTHON BUILD TOOLS
+      # 5. BUILD TOOLS
       # =========================================================
 
       - name: Install Buildozer
@@ -154,19 +92,97 @@ jobs:
 
 
       # =========================================================
-      # 8. VERIFY PROJECT
+      # 6. ACCEPT ANDROID LICENSES
+      # =========================================================
+
+      - name: Accept Android SDK licenses
+        run: |
+          echo "=============================================="
+          echo "ANDROID SDK LICENSES"
+          echo "=============================================="
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -f "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" \
+              -name sdkmanager \
+              -type f \
+              | head -n 1)"
+          fi
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found."
+            exit 1
+          fi
+
+          echo "Using:"
+          echo "$SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+
+          echo "Android SDK licenses accepted."
+
+
+      # =========================================================
+      # 7. VERIFY BUILD TOOLS
+      # =========================================================
+
+      - name: Verify Android SDK
+        run: |
+          echo "=============================================="
+          echo "ANDROID SDK CHECK"
+          echo "=============================================="
+
+          echo "ANDROID_HOME:"
+          echo "$ANDROID_HOME"
+
+          echo ""
+          echo "Installed Build Tools:"
+          ls -la "$ANDROID_HOME/build-tools"
+
+          echo ""
+          echo "AIDL files:"
+          find "$ANDROID_HOME/build-tools" \
+            -name aidl \
+            -type f \
+            -print
+
+          echo ""
+          echo "ADB:"
+          find "$ANDROID_HOME/platform-tools" \
+            -name adb \
+            -type f \
+            -print
+
+          AIDL="$ANDROID_HOME/build-tools/37.0.0/aidl"
+
+          if [ ! -f "$AIDL" ]; then
+            echo "ERROR: Build-Tools 37.0.0 AIDL not found."
+            exit 1
+          fi
+
+          echo ""
+          echo "AIDL found:"
+          echo "$AIDL"
+
+          echo ""
+          echo "Android SDK verification PASSED."
+
+
+      # =========================================================
+      # 8. VERIFY PROJECT FILES
       # =========================================================
 
       - name: Verify project
         run: |
           echo "=============================================="
-          echo "PROJECT"
+          echo "PROJECT CHECK"
           echo "=============================================="
 
           pwd
 
           echo ""
-          echo "Files:"
+          echo "Project files:"
           ls -la
 
           echo ""
@@ -181,57 +197,50 @@ jobs:
           test -f buildozer.spec
           test -f requirements.txt
 
-          echo "Project files verified."
+          echo ""
+          echo "Project verification PASSED."
 
 
       # =========================================================
-      # 9. PYTHON SYNTAX CHECK
+      # 9. PYTHON SYNTAX
       # =========================================================
 
       - name: Check Python syntax
         run: |
           python -m py_compile main.py
 
-          echo "main.py syntax OK."
+          echo "main.py syntax check PASSED."
 
 
       # =========================================================
-      # 10. VERIFY ANDROID BUILD TOOLS
+      # 10. CHECK REQUIREMENTS
       # =========================================================
 
-      - name: Verify Android tools
+      - name: Check Android requirements
         run: |
           echo "=============================================="
-          echo "ANDROID TOOL CHECK"
+          echo "DEPENDENCY CHECK"
           echo "=============================================="
 
-          echo "SDK:"
-          echo "$ANDROID_HOME"
+          if grep -Eiq \
+            'openpyxl|reportlab|python-docx|docx' \
+            requirements.txt; then
 
-          echo ""
-          echo "Build Tools:"
-          ls -la "$ANDROID_HOME/build-tools"
-
-          echo ""
-          echo "AIDL:"
-          find "$ANDROID_HOME/build-tools" -name aidl -type f -print
-
-          echo ""
-          echo "ADB:"
-          find "$ANDROID_HOME/platform-tools" -name adb -type f -print
-
-          AIDL="$ANDROID_HOME/build-tools/37.0.0/aidl"
-
-          if [ ! -f "$AIDL" ]; then
-            echo "ERROR: AIDL was not installed."
+            echo "ERROR: Removed package found."
+            cat requirements.txt
             exit 1
           fi
 
-          chmod +x "$AIDL"
+          if grep -Eiq \
+            'requests|charset-normalizer|charset_normalizer|certifi|urllib3|idna' \
+            requirements.txt; then
 
-          "$AIDL" --version || true
+            echo "ERROR: Network dependency found."
+            cat requirements.txt
+            exit 1
+          fi
 
-          echo "Android tools verified."
+          echo "Requirements check PASSED."
 
 
       # =========================================================
@@ -240,6 +249,10 @@ jobs:
 
       - name: Prepare FreeType
         run: |
+          echo "=============================================="
+          echo "FREETYPE"
+          echo "=============================================="
+
           rm -rf "$HOME/freetype-source"
 
           git clone \
@@ -250,11 +263,11 @@ jobs:
 
           test -f "$HOME/freetype-source/CMakeLists.txt"
 
-          echo "FreeType source ready."
+          echo "FreeType source prepared."
 
 
       # =========================================================
-      # 12. SET FREETYPE ENVIRONMENT
+      # 12. CONFIGURE FREETYPE
       # =========================================================
 
       - name: Configure FreeType
@@ -263,13 +276,31 @@ jobs:
 
           export P4A_freetype_DIR="$HOME/freetype-source"
 
-          echo "P4A_freetype_DIR=$P4A_freetype_DIR"
+          echo "P4A_freetype_DIR:"
+          echo "$P4A_freetype_DIR"
 
           test -d "$P4A_freetype_DIR"
 
 
       # =========================================================
-      # 13. SHOW ENVIRONMENT
+      # 13. CLEAN OLD BUILD CACHE
+      # =========================================================
+
+      - name: Clean old Buildozer cache
+        run: |
+          echo "=============================================="
+          echo "CLEANING OLD BUILD"
+          echo "=============================================="
+
+          rm -rf .buildozer/android/platform/build-arm64-v8a/build/python-installs
+
+          rm -rf .buildozer/android/platform/build-arm64-v8a/dists
+
+          echo "Old Python installation and distribution cache removed."
+
+
+      # =========================================================
+      # 14. SHOW ENVIRONMENT
       # =========================================================
 
       - name: Show build environment
@@ -278,29 +309,28 @@ jobs:
           echo "BUILD ENVIRONMENT"
           echo "=============================================="
 
+          echo "Python:"
           python --version
+
+          echo ""
+          echo "Java:"
           java -version
+
+          echo ""
+          echo "Buildozer:"
           buildozer --version
 
           echo ""
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-          echo "ANDROIDAPI=$ANDROIDAPI"
-          echo "ANDROIDMINAPI=$ANDROIDMINAPI"
-          echo "P4A_freetype_DIR=$P4A_freetype_DIR"
+          echo "ANDROID_HOME:"
+          echo "$ANDROID_HOME"
 
+          echo ""
+          echo "ANDROID_NDK_HOME:"
+          echo "$ANDROID_NDK_HOME"
 
-      # =========================================================
-      # 14. CLEAN OLD BUILD CACHE
-      # =========================================================
-
-      - name: Clean old Buildozer cache
-        run: |
-          rm -rf .buildozer/android/platform/build-arm64-v8a/build/python-installs
-          rm -rf .buildozer/android/platform/build-arm64-v8a/dists
-
-          echo "Old Android Python build cache removed."
+          echo ""
+          echo "P4A_freetype_DIR:"
+          echo "$P4A_freetype_DIR"
 
 
       # =========================================================
@@ -309,27 +339,31 @@ jobs:
 
       - name: Build APK
         run: |
-          export P4A_freetype_DIR="$HOME/freetype-source"
+          echo "=============================================="
+          echo "BUILDING HSE MANAGEMENT APK"
+          echo "=============================================="
 
-          echo "=============================================="
-          echo "STARTING BUILD"
-          echo "=============================================="
+          export P4A_freetype_DIR="$HOME/freetype-source"
 
           buildozer -v android debug
 
 
       # =========================================================
-      # 16. SHOW APK
+      # 16. FIND APK
       # =========================================================
 
-      - name: Show generated APK
+      - name: Find APK
         if: success()
         run: |
           echo "=============================================="
-          echo "APK FILE"
+          echo "APK RESULT"
           echo "=============================================="
 
-          find bin -maxdepth 1 -type f -name "*.apk" -print
+          find bin \
+            -maxdepth 1 \
+            -type f \
+            -name "*.apk" \
+            -print
 
           ls -lh bin/*.apk
 
@@ -349,10 +383,10 @@ jobs:
 
 
       # =========================================================
-      # 18. SAVE LOGS IF BUILD FAILS
+      # 18. UPLOAD LOGS IF FAILURE
       # =========================================================
 
-      - name: Upload build logs
+      - name: Upload Build Logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
