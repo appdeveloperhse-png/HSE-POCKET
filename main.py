@@ -445,7 +445,7 @@ class AppHSE(App):
         self.gallery_callback = None
         self.pending_export = None
         self._android_activity = None
-        self.setup_android_activity()
+        self._activity_bound = False
 
         for n, f in [
             ('home', self.home), ('observations', self.observations),
@@ -459,12 +459,21 @@ class AppHSE(App):
         return self.sm
 
     def setup_android_activity(self):
+        # Android activity binding is deliberately deferred until a gallery/export
+        # operation is requested. This prevents startup crashes on Android builds
+        # where the android.activity bridge is not ready during App.build().
+        if self._activity_bound:
+            return True
         try:
             from android import activity
             self._android_activity = activity
             activity.bind(on_activity_result=self.on_activity_result)
+            self._activity_bound = True
+            return True
         except Exception:
             self._android_activity = None
+            self._activity_bound = False
+            return False
 
     def on_activity_result(self, request_code, result_code, intent):
         if request_code == REQUEST_GALLERY:
@@ -553,7 +562,7 @@ class AppHSE(App):
 
     def select_gallery_image(self, callback):
         self.gallery_callback = callback
-        if not self._android_activity:
+        if not self.setup_android_activity():
             return msg('Gallery', 'Gallery selection is available on Android builds.')
         try:
             from jnius import autoclass
@@ -572,7 +581,7 @@ class AppHSE(App):
     def request_save_file(self, source, display_name, mime_type):
         if not os.path.isfile(source):
             return msg('Export Error', 'The export file could not be created.')
-        if not self._android_activity:
+        if not self.setup_android_activity():
             return msg('Saved', 'File created at:\n%s' % source)
         try:
             from jnius import autoclass
@@ -1280,7 +1289,7 @@ class AppHSE(App):
 
     def on_stop(self):
         try:
-            if self._android_activity:
+            if self._activity_bound and self._android_activity:
                 self._android_activity.unbind(on_activity_result=self.on_activity_result)
         except Exception:
             pass
