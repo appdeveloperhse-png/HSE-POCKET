@@ -203,7 +203,7 @@ class DB:
             id INTEGER PRIMARY KEY,date,time,location,inspection_type,inspector,activity,checklist,
             unsafe_acts,unsafe_conditions,good_practices,ppe,excavation,wah,lifting,scaffolding,
             electrical,confined_space,hot_work,fire,housekeeping,vehicle,environment,emergency,
-            findings,actions,responsible,target,status,evidence,created_at)''')
+            findings,actions,responsible,target_date,status,evidence,created_at)''')
         c.execute('''CREATE TABLE IF NOT EXISTS audits(
             id INTEGER PRIMARY KEY,date,location,audit_type,auditor,scope,findings,nc,good_practices,
             actions,responsible,target,status,evidence,created_at)''')
@@ -217,6 +217,10 @@ class DB:
         self.ensure_column('observations', 'observer_id', 'TEXT')
         self.ensure_column('observations', 'observer_designation', 'TEXT')
         self.ensure_column('observations', 'department', 'TEXT')
+        # Database migration for older APK versions. Older HSE-POCKET builds
+        # used the column name `target`; inspections now use `target_date`.
+        # Adding the new column here prevents SQLite crashes on existing installs.
+        self.ensure_column('inspections', 'target_date', 'TEXT')
         self.c.commit()
 
     def add(self, t, d):
@@ -432,6 +436,10 @@ def build_pdf(pages, out_path, logo_path=''):
 
 class AppHSE(App):
     def build(self):
+        # IMPORTANT: Do not build every module during Android startup.
+        # A single error in any secondary screen used to make the APK open
+        # and immediately close. Only Home is created here; other modules
+        # are created when the user opens them.
         Window.clearcolor = BG
         self.dir = os.path.join(self.user_data_dir, 'HSE_POCKET')
         self.export_dir = os.path.join(self.dir, 'Exports')
@@ -439,23 +447,48 @@ class AppHSE(App):
         os.makedirs(self.dir, exist_ok=True)
         os.makedirs(self.export_dir, exist_ok=True)
         os.makedirs(self.photo_dir, exist_ok=True)
-        self.db = DB(os.path.join(self.dir, 'hse_pocket.db'))
-        self.sm = ScreenManager()
         self.selected_observations = {}
         self.gallery_callback = None
         self.pending_export = None
         self._android_activity = None
         self._activity_bound = False
+        self.sm = ScreenManager()
 
-        for n, f in [
-            ('home', self.home), ('observations', self.observations),
-            ('incidents', self.incidents), ('inspections', self.inspections),
-            ('audits', self.audits), ('capa', self.capa), ('files', self.files),
-            ('settings', self.settings)
-        ]:
-            s = Screen(name=n)
-            s.add_widget(f())
-            self.sm.add_widget(s)
+        try:
+            self.db = DB(os.path.join(self.dir, 'hse_pocket.db'))
+            home_screen = Screen(name='home')
+            home_screen.add_widget(self.home())
+            self.sm.add_widget(home_screen)
+            return self.sm
+        except Exception as e:
+            # Keep the APK open and show the actual startup error instead of
+            # silently closing. This is especially useful for Android testing.
+            import traceback
+            error = traceback.format_exc()
+            try:
+                with open(os.path.join(self.dir, 'startup_error.txt'), 'w', encoding='utf-8') as f:
+                    f.write(error)
+            except Exception:
+                pass
+            return self.error_screen('STARTUP ERROR', error)
+
+    def error_screen(self, title, details):
+        root = BoxLayout(orientation='vertical', padding=dp(14), spacing=dp(10))
+        root.add_widget(L('HSE-POCKET', 24, NAVY, True, 42))
+        root.add_widget(L(title, 17, RED, True, 34))
+        sc = ScrollView()
+        lab = Label(text=str(details), color=TEXT, font_size=dp(11), halign='left', valign='top',
+                    size_hint_y=None, text_size=(None, None))
+        lab.bind(width=lambda o, v: setattr(o, 'text_size', (max(1, v-dp(10)), None)))
+        lab.bind(texture_size=lambda o, v: setattr(o, 'height', max(dp(200), v[1]+dp(20))))
+        sc.add_widget(lab)
+        root.add_widget(sc)
+        b = B('CLOSE APP', NAVY, 46)
+        b.bind(on_release=lambda _: self.stop())
+        root.add_widget(b)
+        screen = Screen(name='error')
+        screen.add_widget(root)
+        self.sm.add_widget(screen)
         return self.sm
 
     def setup_android_activity(self):
@@ -598,9 +631,42 @@ class AppHSE(App):
             msg('Export Error', str(e))
 
     def go(self, n):
-        self.sm.current = n
         if n == 'home':
+            self.sm.current = 'home'
             self.refresh()
+            return
+
+        # Lazy-load every secondary module. The old version called every
+        # screen builder during App.build(), so one bad module could crash
+        # the whole Android app before Home was displayed.
+        if not self.sm.has_screen(n):
+            builders = {
+                'observations': self.observations,
+                'incidents': self.incidents,
+                'inspections': self.inspections,
+                'audits': self.audits,
+                'capa': self.capa,
+                'files': self.files,
+                'settings': self.settings,
+            }
+            builder = builders.get(n)
+            if builder is None:
+                return msg('Navigation Error', 'Unknown module: %s' % n)
+            try:
+                screen = Screen(name=n)
+                screen.add_widget(builder())
+                self.sm.add_widget(screen)
+            except Exception as e:
+                import traceback
+                details = traceback.format_exc()
+                try:
+                    with open(os.path.join(self.dir, 'screen_error_%s.txt' % n), 'w', encoding='utf-8') as f:
+                        f.write(details)
+                except Exception:
+                    pass
+                return msg('%s Error' % n.upper(), details)
+
+        self.sm.current = n
 
     def nav(self):
         x = BoxLayout(size_hint_y=None, height=dp(55), spacing=dp(2), padding=dp(2))
