@@ -17,8 +17,13 @@ import mimetypes
 import zlib
 import struct
 from datetime import datetime
+import sys
+import traceback
+import faulthandler
 
 from kivy.app import App
+from kivy.clock import Clock
+from kivy.base import ExceptionManager, ExceptionHandler
 from kivy.metrics import dp
 from kivy.core.window import Window
 from kivy.graphics import Color, RoundedRectangle
@@ -28,8 +33,3 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.label import Label
 from kivy.uix.button import Button
-from kivy.uix.textinput import TextInput
-from kivy.uix.spinner import Spinner
-from kivy.uix.popup import Popup
-from kivy.uix.checkbox import CheckBox
-from kivy.uix.image import Image
