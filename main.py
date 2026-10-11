@@ -26,7 +26,7 @@ from kivy.clock import Clock
 from kivy.base import ExceptionManager, ExceptionHandler
 from kivy.metrics import dp
 from kivy.core.window import Window
-from kivy.graphics import Color, RoundedRectangle
+from kivy.graphics import Color, RoundedRectangle, Rectangle
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
