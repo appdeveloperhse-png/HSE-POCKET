@@ -2778,5 +2778,8 @@ class AppHSE(App):
             pass
 
 
-if __name__ == '__main__':
-    AppHSE().run()
+if __name__ == "__main__":
+    try:
+        HSEPocketApp().run()
+    except Exception:
+        traceback.print_exc()
