@@ -1,4 +1,5 @@
-name: HSE-POCKET Android APK
+
+name: HSE Management Android (PySide6)
 
 on:
   workflow_dispatch:
@@ -7,516 +8,146 @@ on:
       - main
       - master
 
+permissions:
+  contents: read
+
 jobs:
   build-apk:
     runs-on: ubuntu-22.04
-
-    env:
-      DEBIAN_FRONTEND: noninteractive
-
-      JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.20-1/x64
-
-      ANDROID_HOME: /home/runner/.buildozer/android/platform/android-sdk
-      ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
-
-      ANDROIDAPI: "34"
-      ANDROIDMINAPI: "24"
-
-      P4A_freetype_DIR: /home/runner/freetype-source
+    timeout-minutes: 90
 
     steps:
-
-      # ============================================================
-      # 1. CHECKOUT
-      # ============================================================
-      - name: Checkout HSE-POCKET
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. PYTHON
-      # ============================================================
-      - name: Setup Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      # ============================================================
-      # 3. JAVA
-      # ============================================================
-      - name: Setup Java 17
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # ============================================================
-      # 4. SYSTEM DEPENDENCIES
-      # ============================================================
       - name: Install system dependencies
         run: |
           sudo apt-get update
-
           sudo apt-get install -y \
-            git \
-            zip \
-            unzip \
-            wget \
-            curl \
-            rsync \
-            build-essential \
-            autoconf \
-            automake \
-            libtool \
-            pkg-config \
-            cmake \
-            libffi-dev \
-            libssl-dev \
-            zlib1g-dev \
-            libsqlite3-dev \
-            liblzma-dev \
-            libncurses5-dev \
-            libncursesw5-dev \
-            libreadline-dev \
-            libbz2-dev \
-            libgdbm-dev \
-            libgdbm-compat-dev \
-            libdb-dev \
-            libexpat1-dev \
-            libgl1-mesa-dev \
-            libgles2-mesa-dev
+            git zip unzip wget curl \
+            build-essential cmake \
+            autoconf automake libtool pkg-config \
+            libffi-dev libssl-dev zlib1g-dev \
+            libsqlite3-dev liblzma-dev \
+            libncurses5-dev libncursesw5-dev \
+            libreadline-dev libbz2-dev \
+            libgdbm-dev libdb-dev libexpat1-dev
 
-      # ============================================================
-      # 5. PYTHON BUILD TOOLS
-      # ============================================================
-      - name: Install Buildozer and Cython
+      - name: Check application source
+        run: |
+          set -eux
+          test -f main.py
+          grep -q "from PySide6" main.py
+          grep -q "QApplication" main.py
+          python -m py_compile main.py
+
+          echo "PySide6 source and Python syntax check passed."
+
+      - name: Install Qt for Python deployment tools
         run: |
           python -m pip install --upgrade pip setuptools wheel
+          python -m pip install "PySide6==6.10.1"
+
+          python -c "import PySide6; print(PySide6.__version__)"
+          pyside6-android-deploy --help
+
+      - name: Download Android SDK, NDK and Android Python
+        run: |
+          git clone --depth 1 --branch 6.10 \
+            https://code.qt.io/pyside/pyside-setup.git \
+            "$RUNNER_TEMP/pyside-setup"
 
           python -m pip install \
-            "buildozer==1.6.0" \
-            "cython==0.29.34"
+            -r "$RUNNER_TEMP/pyside-setup/requirements.txt" \
+            -r "$RUNNER_TEMP/pyside-setup/tools/cross_compile_android/requirements.txt"
 
-      # ============================================================
-      # 6. CHECK APP
-      # ============================================================
-      - name: Check main.py
+          python "$RUNNER_TEMP/pyside-setup/tools/cross_compile_android/main.py" \
+            --download-only \
+            --skip-update \
+            --auto-accept-license
+
+      - name: Download Android PySide6 wheels
         run: |
-          python -m py_compile main.py
-          echo "main.py syntax OK."
+          set -eux
 
-      # ============================================================
-      # 7. FREETYPE
-      # ============================================================
-      - name: Prepare FreeType
-        run: |
-          rm -rf "$HOME/freetype-source"
+          qtpip download PySide6 --android --arch aarch64
 
-          git clone \
-            --depth 1 \
-            --branch VER-2-14-1 \
-            https://github.com/freetype/freetype.git \
-            "$HOME/freetype-source"
+          echo "Searching for Android wheels..."
+          find . "$HOME" -type f \
+            \( -iname '*pyside6*android*aarch64*.whl' \
+            -o -iname '*shiboken6*android*aarch64*.whl' \) \
+            -print 2>/dev/null | head -100
 
-          test -f "$HOME/freetype-source/CMakeLists.txt"
+          PYSIDE_WHEEL="$(find . "$HOME" -type f \
+            -iname '*pyside6*android*aarch64*.whl' \
+            -print -quit 2>/dev/null || true)"
 
-          echo "FreeType ready."
+          SHIBOKEN_WHEEL="$(find . "$HOME" -type f \
+            -iname '*shiboken6*android*aarch64*.whl' \
+            -print -quit 2>/dev/null || true)"
 
-      # ============================================================
-      # 8. PREPARE ANDROID SDK
-      # ============================================================
-      - name: Prepare Android SDK
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          SDK="$HOME/.buildozer/android/platform/android-sdk"
-
-          mkdir -p "$SDK"
-
-          echo "Copying GitHub runner Android SDK..."
-
-          rsync -a \
-            --exclude='ndk' \
-            --exclude='ndk-bundle' \
-            /usr/local/lib/android/sdk/ \
-            "$SDK/"
-
-          echo
-          echo "Finding modern sdkmanager..."
-
-          SYSTEM_SDKMANAGER=""
-
-          if [ -x "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SYSTEM_SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
-
-          elif [ -x "/usr/local/lib/android/sdk/cmdline-tools/bin/sdkmanager" ]; then
-            SYSTEM_SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/bin/sdkmanager"
-
-          else
-            SYSTEM_SDKMANAGER="$(find \
-              /usr/local/lib/android/sdk/cmdline-tools \
-              -type f \
-              -name sdkmanager \
-              -executable \
-              2>/dev/null \
-              | head -1 || true)"
-          fi
-
-          if [ -z "$SYSTEM_SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager not found."
-            find /usr/local/lib/android/sdk \
-              -type f \
-              -name sdkmanager \
-              2>/dev/null || true
+          if [ -z "$PYSIDE_WHEEL" ] || [ -z "$SHIBOKEN_WHEEL" ]; then
+            echo "::error::Required Android PySide6/Shiboken wheels were not found."
+            echo "Inspect the qtpip output and official Qt Android wheel instructions."
             exit 1
           fi
 
-          echo "Found:"
-          echo "$SYSTEM_SDKMANAGER"
+          echo "PYSIDE_WHEEL=$PYSIDE_WHEEL" >> "$GITHUB_ENV"
+          echo "SHIBOKEN_WHEEL=$SHIBOKEN_WHEEL" >> "$GITHUB_ENV"
 
-          # Create legacy path required by p4a 2024.01.21
-          mkdir -p "$SDK/tools/bin"
-
-          if [ -d "/usr/local/lib/android/sdk/cmdline-tools" ]; then
-            rm -rf "$SDK/cmdline-tools"
-
-            cp -a \
-              "/usr/local/lib/android/sdk/cmdline-tools" \
-              "$SDK/cmdline-tools"
-          fi
-
-          PRIVATE_SDKMANAGER=""
-
-          if [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
-            PRIVATE_SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
-          else
-            PRIVATE_SDKMANAGER="$(find \
-              "$SDK/cmdline-tools" \
-              -type f \
-              -name sdkmanager \
-              -executable \
-              2>/dev/null \
-              | head -1 || true)"
-          fi
-
-          if [ -z "$PRIVATE_SDKMANAGER" ]; then
-            echo "ERROR: private sdkmanager not found."
-            exit 1
-          fi
-
-          ln -sfn \
-            "$PRIVATE_SDKMANAGER" \
-            "$SDK/tools/bin/sdkmanager"
-
-          echo
-          echo "Legacy sdkmanager:"
-          ls -l "$SDK/tools/bin/sdkmanager"
-
-          test -e "$SDK/tools/bin/sdkmanager"
-          test -x "$SDK/tools/bin/sdkmanager"
-
-          echo
-          echo "SDK preparation complete."
-
-      # ============================================================
-      # 9. ACCEPT LICENSES
-      # ============================================================
-      - name: Accept Android licenses
-        shell: bash
+      - name: Build Android APK
         run: |
-          set -e
+          set -eux
 
-          SDK="$HOME/.buildozer/android/platform/android-sdk"
+          pyside6-android-deploy \
+            --name "HSE Management" \
+            --wheel-pyside "$PYSIDE_WHEEL" \
+            --wheel-shiboken "$SHIBOKEN_WHEEL" \
+            --keep-deployment-files
 
-          export ANDROID_HOME="$SDK"
-          export ANDROID_SDK_ROOT="$SDK"
-
-          SDKMANAGER="$SDK/tools/bin/sdkmanager"
-
-          test -e "$SDKMANAGER"
-          test -x "$SDKMANAGER"
-
-          # pipefail intentionally disabled for this command.
-          # sdkmanager may close stdin after consuming the licenses,
-          # which causes yes to receive SIGPIPE.
-          set +o pipefail
-
-          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-
-          set -o pipefail
-
-          echo "Android licenses accepted."
-
-      # ============================================================
-      # 10. INSTALL ANDROID PACKAGES
-      # ============================================================
-      - name: Install Android SDK packages
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          SDK="$HOME/.buildozer/android/platform/android-sdk"
-
-          export ANDROID_HOME="$SDK"
-          export ANDROID_SDK_ROOT="$SDK"
-
-          SDKMANAGER="$SDK/tools/bin/sdkmanager"
-
-          test -e "$SDKMANAGER"
-          test -x "$SDKMANAGER"
-
-          echo "Installing Android SDK packages..."
-
-          # IMPORTANT:
-          # Do NOT use:
-          #
-          # yes | sdkmanager ...
-          #
-          # because pipefail makes yes/SIGPIPE fail the step.
-
-          "$SDKMANAGER" \
-            "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0"
-
-          echo
-          echo "Android packages installed."
-
-          echo
-          echo "Installed platforms:"
-          find "$SDK/platforms" \
-            -maxdepth 1 \
-            -mindepth 1 \
-            -type d \
-            2>/dev/null || true
-
-          echo
-          echo "Installed Build Tools:"
-          find "$SDK/build-tools" \
-            -maxdepth 1 \
-            -mindepth 1 \
-            -type d \
-            2>/dev/null || true
-
-          test -d "$SDK/platforms/android-34"
-          test -d "$SDK/build-tools/34.0.0"
-
-          echo
-          echo "ANDROID SDK PREPARATION PASSED."
-
-      # ============================================================
-      # 11. CLEAN BUILDOZER BUILD
-      # ============================================================
-      - name: Clean Buildozer state
-        run: |
-          rm -rf .buildozer
-          rm -rf bin
-
-          mkdir -p bin
-
-          echo "Clean build state ready."
-
-      # ============================================================
-      # 12. TOOLCHAIN PREFLIGHT
-      # ============================================================
-      - name: Verify toolchain
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          SDK="$HOME/.buildozer/android/platform/android-sdk"
-
-          echo
-          echo "======================================"
-          echo "HSE-POCKET TOOLCHAIN"
-          echo "======================================"
-
-          echo
-          echo "Python:"
-          python --version
-
-          echo
-          echo "Java:"
-          java -version
-
-          echo
-          echo "Buildozer:"
-          buildozer --version
-
-          echo
-          echo "Cython:"
-          cython --version
-
-          echo
-          echo "SDK:"
-          echo "$SDK"
-
-          echo
-          echo "sdkmanager:"
-          ls -l "$SDK/tools/bin/sdkmanager"
-
-          echo
-          echo "Android API:"
-          test -d "$SDK/platforms/android-34"
-          echo "android-34 OK"
-
-          echo
-          echo "Build Tools:"
-          test -d "$SDK/build-tools/34.0.0"
-          echo "34.0.0 OK"
-
-          echo
-          echo "FreeType:"
-          test -f "$HOME/freetype-source/CMakeLists.txt"
-          echo "FreeType OK"
-
-          echo
-          echo "======================================"
-          echo "PREFLIGHT PASSED"
-          echo "======================================"
-
-      # ============================================================
-      # 13. BUILD APK
-      # ============================================================
-      - name: Build HSE-POCKET APK
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          export ANDROID_HOME="$HOME/.buildozer/android/platform/android-sdk"
-          export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
-          export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
-
-          export ANDROIDAPI="34"
-          export ANDROIDMINAPI="24"
-
-          export P4A_freetype_DIR="$HOME/freetype-source"
-
-          echo
-          echo "======================================"
-          echo "BUILDING HSE-POCKET APK"
-          echo "======================================"
-
-          buildozer -v android debug
-
-      # ============================================================
-      # 14. COLLECT APK
-      # ============================================================
-      - name: Collect APK
+      - name: Find and validate APK
         if: success()
-        shell: bash
         run: |
-          set -euxo pipefail
+          set -eux
 
-          echo "Searching for APK..."
+          mkdir -p output
 
-          find . \
-            -type f \
-            -name "*.apk" \
-            -print
+          find . -type f -name '*.apk' \
+            -not -path './.git/*' \
+            -not -path './output/*' \
+            -exec cp {} output/ \;
 
-          APK_COUNT=$(find . \
-            -type f \
-            -name "*.apk" \
-            | wc -l)
+          test -n "$(find output -maxdepth 1 -name '*.apk' -print -quit)"
 
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo "ERROR: APK was not produced."
-            exit 1
-          fi
+          ls -lh output/*.apk
 
-          mkdir -p bin
-
-          find .buildozer \
-            -type f \
-            -name "*.apk" \
-            -exec cp {} bin/ \;
-
-          echo
-          echo "======================================"
-          echo "APK READY"
-          echo "======================================"
-
-          ls -lh bin/*.apk
-
-      # ============================================================
-      # 15. UPLOAD APK ARTIFACT
-      # ============================================================
-      - name: Upload APK artifact
+      - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: HSE-POCKET-APK
-          path: bin/*.apk
+          name: HSE-Management-PySide6-APK
+          path: output/*.apk
           if-no-files-found: error
           retention-days: 30
 
-      # ============================================================
-      # 16. FAILURE DIAGNOSTICS
-      # ============================================================
-      - name: Build diagnostics
+      - name: Upload build logs on failure
         if: failure()
-        shell: bash
-        run: |
-          echo
-          echo "======================================"
-          echo "HSE-POCKET BUILD FAILED"
-          echo "======================================"
-
-          echo
-          echo "Python:"
-          python --version || true
-
-          echo
-          echo "Buildozer:"
-          buildozer --version || true
-
-          echo
-          echo "SDK:"
-          ls -la \
-            "$HOME/.buildozer/android/platform/android-sdk" \
-            2>/dev/null || true
-
-          echo
-          echo "sdkmanager:"
-          ls -la \
-            "$HOME/.buildozer/android/platform/android-sdk/tools/bin" \
-            2>/dev/null || true
-
-          echo
-          echo "Platforms:"
-          find \
-            "$HOME/.buildozer/android/platform/android-sdk/platforms" \
-            -maxdepth 1 \
-            -mindepth 1 \
-            -type d \
-            2>/dev/null || true
-
-          echo
-          echo "Build Tools:"
-          find \
-            "$HOME/.buildozer/android/platform/android-sdk/build-tools" \
-            -maxdepth 1 \
-            -mindepth 1 \
-            -type d \
-            2>/dev/null || true
-
-          echo
-          echo "NDKs:"
-          find \
-            "$HOME/.buildozer/android/platform" \
-            -maxdepth 1 \
-            -type d \
-            -name "android-ndk-*" \
-            2>/dev/null || true
-
-          echo
-          echo "APK files:"
-          find . \
-            -type f \
-            -name "*.apk" \
-            -print \
-            2>/dev/null || true
-
-          echo
-          echo "======================================"
+        uses: actions/upload-artifact@v4
+        with:
+          name: HSE-Management-Build-Diagnostics
+          path: |
+            .buildozer/
+            buildozer.log
+          if-no-files-found: ignore
+          retention-days: 7
