@@ -2,23 +2,15 @@
 name: Build HSE Management System APK
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
-    paths:
-      - "main.py"
-      - "buildozer.spec"
-      - "requirements.txt"
-      - ".github/workflows/android_build.yml"
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   build-apk:
-    name: Build Android APK
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
@@ -38,90 +30,65 @@ jobs:
           java-version: "17"
 
       - name: Install Android build dependencies
-        shell: bash
         run: |
-          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
-            git zip unzip \
-            autoconf automake libtool \
-            pkg-config cmake \
             build-essential \
+            git \
+            zip \
+            unzip \
+            openjdk-17-jdk \
+            autoconf \
+            libtool \
+            pkg-config \
             zlib1g-dev \
             libncurses5-dev \
             libncursesw5-dev \
-            libtinfo6 \
+            libtinfo5 \
+            cmake \
             libffi-dev \
-            libssl-dev \
-            libltdl-dev
+            libssl-dev
 
-      - name: Install Buildozer
-        shell: bash
+      - name: Install pinned build tools
         run: |
-          set -euxo pipefail
-          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install --upgrade pip
           python -m pip install \
-            "buildozer==1.5.0" \
-            "Cython==0.29.34"
+            buildozer==1.5.0 \
+            Cython==0.29.34
 
-      - name: Validate project files
-        shell: bash
+      - name: Verify application source
         run: |
-          set -euxo pipefail
-
-          test -f main.py
-          test -f buildozer.spec
-
           python -m py_compile main.py
-
-          grep -q "requirements = python3,kivy" buildozer.spec
-
-          if grep -q "PySide6\|PyQt6" main.py; then
-            echo "ERROR: Qt imports remain in main.py."
-            echo "Use the Kivy replacement main.py provided for this workflow."
+          if grep -nE '(^|[[:space:]])(from|import)[[:space:]]+(PySide6|PyQt6)' main.py; then
+            echo "ERROR: Qt imports found in the Kivy application."
             exit 1
           fi
 
+      - name: Clean previous Android build
+        run: |
+          rm -rf .buildozer
+          rm -rf bin
+
       - name: Build debug APK
-        shell: bash
         env:
           BUILDOZER_WARN_ON_ROOT: "0"
         run: |
-          set -euxo pipefail
-          buildozer android debug
-
-      - name: Verify APK exists
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          mkdir -p apk-output
-          find bin -maxdepth 1 -type f -name "*.apk" -exec cp {} apk-output/ \;
-
-          if ! find apk-output -maxdepth 1 -type f -name "*.apk" | grep -q .; then
-            echo "ERROR: Build completed without producing an APK."
-            echo "Contents of bin directory:"
-            find bin -maxdepth 2 -type f -print || true
-            exit 1
-          fi
-
-          ls -lh apk-output
+          buildozer -v android debug 2>&1 | tee android-build.log
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: HSE-Management-System-APK
-          path: apk-output/*.apk
+          path: bin/*.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
 
-      - name: Upload build logs if failed
+      - name: Upload build log if build fails
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: HSE-Android-Build-Logs
-          path: |
-            .buildozer/android/platform/build-*/dists/**/build.log
-            .buildozer/android/platform/build-*/**/*.log
-          if-no-files-found: ignore
-          retention-days: 7
+          name: HSE-Android-Build-Log
+          path: android-build.log
+          if-no-files-found: warn
+          retention-days: 14
