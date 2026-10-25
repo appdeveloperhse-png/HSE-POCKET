@@ -1,98 +1,12 @@
 
-name: HSE Management System Android
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
-
-permissions:
-  contents: read
-
-jobs:
-  build-android:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 120
-
-    env:
-      PYSIDE_VERSION: "6.10.1"
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Install system dependencies
+      - name: Install Qt wheel download tool
         shell: bash
         run: |
           set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            git zip unzip wget curl rsync \
-            build-essential cmake autoconf automake \
-            libtool pkg-config libffi-dev libssl-dev \
-            zlib1g-dev libsqlite3-dev liblzma-dev \
-            libncurses5-dev libncursesw5-dev \
-            libreadline-dev libbz2-dev libgdbm-dev \
-            libgdbm-compat-dev libdb-dev libexpat1-dev
-
-      - name: Validate application source
-        shell: bash
-        run: |
-          set -euxo pipefail
-          test -f main.py
-          grep -q 'PySide6' main.py
-          python -m py_compile main.py
-          echo "Python syntax check passed."
-
-      - name: Install PySide6 deployment dependencies
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "PySide6==${PYSIDE_VERSION}"
-
-          ANDROID_REQUIREMENTS="$(python -c 'import pathlib, PySide6; print(pathlib.Path(PySide6.__file__).parent / "scripts" / "requirements-android.txt")')"
-
-          test -f "$ANDROID_REQUIREMENTS"
-          python -m pip install -r "$ANDROID_REQUIREMENTS"
-
-          python -m pip install "buildozer==1.6.0" "Cython==0.29.34"
-
-          python -c "import PySide6, jinja2, pkginfo, tqdm; print('PySide6:', PySide6.__version__); print('Deployment dependencies installed.')"
-
-          pyside6-android-deploy --help
-
-      - name: Download Android SDK and NDK
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          git clone --depth 1 --branch 6.10 \
-            https://code.qt.io/pyside/pyside-setup.git \
-            "$RUNNER_TEMP/pyside-setup"
-
-          python -m pip install \
-            -r "$RUNNER_TEMP/pyside-setup/requirements.txt" \
-            -r "$RUNNER_TEMP/pyside-setup/tools/cross_compile_android/requirements.txt"
-
-          python "$RUNNER_TEMP/pyside-setup/tools/cross_compile_android/main.py" \
-            --download-only \
-            --skip-update \
-            --auto-accept-license
+          python -m pip install --upgrade qtpip
+          python -m pip show qtpip
+          command -v qtpip
+          qtpip --help
 
       - name: Download Android PySide6 wheels
         shell: bash
@@ -127,8 +41,9 @@ jobs:
           shiboken = matches("shiboken6")
 
           if not pyside or not shiboken:
-              print("ERROR: Matching Android PySide6/Shiboken wheels not found.")
-              print("Check the qtpip download output and wheel filenames.")
+              print("ERROR: Required Android wheels were not found.")
+              for wheel in wheels:
+                  print(wheel.name)
               sys.exit(1)
 
           with open(os.environ["GITHUB_ENV"], "a") as env:
@@ -137,61 +52,3 @@ jobs:
 
           print("Android wheel selection passed.")
           PY
-
-      - name: Build Android APK
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          pyside6-android-deploy \
-            --name "HSE Management System" \
-            --wheel-pyside="$PYSIDE_WHEEL" \
-            --wheel-shiboken="$SHIBOKEN_WHEEL" \
-            --keep-deployment-files \
-            --force
-
-      - name: Validate APK output
-        if: success()
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          mkdir -p output
-
-          find . -type f -name '*.apk' \
-            -not -path './.git/*' \
-            -not -path './output/*' \
-            -exec cp {} output/ \;
-
-          APK="$(find output -maxdepth 1 -type f -name '*.apk' -print -quit)"
-
-          if [ -z "$APK" ]; then
-            echo "::error::Build finished without producing an APK."
-            exit 1
-          fi
-
-          unzip -t "$APK"
-          echo "APK archive integrity check passed."
-          ls -lh "$APK"
-
-      - name: Upload APK
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: HSE-Management-System-APK
-          path: output/*.apk
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload diagnostic logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: HSE-Management-System-Build-Logs
-          path: |
-            $HOME/.pyside6-android-deploy/**
-            .buildozer/**
-            **/buildozer.log
-            **/pysidedeploy.spec
-          if-no-files-found: ignore
-          retention-days: 7
