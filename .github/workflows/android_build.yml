@@ -1,5 +1,5 @@
 
-name: HSE Management System Android
+name: Build HSE Management System APK
 
 on:
   workflow_dispatch:
@@ -8,49 +8,28 @@ on:
       - main
       - master
     paths:
-      - ".github/workflows/android_build.yml"
       - "main.py"
-      - "requirements.txt"
       - "buildozer.spec"
+      - "requirements.txt"
+      - ".github/workflows/android_build.yml"
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  build-apk:
     name: Build Android APK
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Linux system dependencies
-        shell: bash
-        run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            libdouble-conversion3 \
-            libgl1 \
-            libegl1 \
-            libxkbcommon0 \
-            libxcb-cursor0 \
-            libxcb-icccm4 \
-            libxcb-keysyms1 \
-            libxcb-shape0 \
-            libxcb-xinerama0 \
-            libxcb-xkb1 \
-            unzip \
-            zip
-          ldconfig -p | grep libdouble-conversion.so.3
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: pip
+          python-version: "3.11"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -58,153 +37,77 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Check project files
+      - name: Install Android build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            git zip unzip \
+            autoconf automake libtool \
+            pkg-config cmake \
+            build-essential \
+            zlib1g-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libtinfo6 \
+            libffi-dev \
+            libssl-dev \
+            libltdl-dev
+
+      - name: Install Buildozer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install \
+            "buildozer==1.5.0" \
+            "Cython==0.29.34"
+
+      - name: Validate project files
         shell: bash
         run: |
           set -euxo pipefail
 
-          if [ ! -f main.py ]; then
-            echo "ERROR: main.py was not found in the repository root."
-            echo "Repository files:"
-            ls -la
-            exit 1
-          fi
+          test -f main.py
+          test -f buildozer.spec
 
           python -m py_compile main.py
 
-          if ! grep -q "PySide6" main.py; then
-            echo "ERROR: main.py does not appear to use PySide6."
+          grep -q "requirements = python3,kivy" buildozer.spec
+
+          if grep -q "PySide6\|PyQt6" main.py; then
+            echo "ERROR: Qt imports remain in main.py."
+            echo "Use the Kivy replacement main.py provided for this workflow."
             exit 1
           fi
 
-      - name: Install Qt Android deployment requirements
+      - name: Build debug APK
+        shell: bash
+        env:
+          BUILDOZER_WARN_ON_ROOT: "0"
+        run: |
+          set -euxo pipefail
+          buildozer android debug
+
+      - name: Verify APK exists
         shell: bash
         run: |
           set -euxo pipefail
 
-          python -m pip install --upgrade pip
-          python -m pip install "PySide6==6.10.1"
+          mkdir -p apk-output
+          find bin -maxdepth 1 -type f -name "*.apk" -exec cp {} apk-output/ \;
 
-          ANDROID_REQUIREMENTS="$(python -c 'import pathlib, PySide6; print(pathlib.Path(PySide6.__file__).parent / "scripts" / "requirements-android.txt")')"
-
-          if [ ! -f "$ANDROID_REQUIREMENTS" ]; then
-            echo "ERROR: Qt Android requirements file not found:"
-            echo "$ANDROID_REQUIREMENTS"
+          if ! find apk-output -maxdepth 1 -type f -name "*.apk" | grep -q .; then
+            echo "ERROR: Build completed without producing an APK."
+            echo "Contents of bin directory:"
+            find bin -maxdepth 2 -type f -print || true
             exit 1
           fi
 
-          python -m pip install -r "$ANDROID_REQUIREMENTS"
-          python -m pip install qtpip
+          ls -lh apk-output
 
-          python -m pip show PySide6
-          python -m pip show qtpip
-          python -m pip check
-
-      - name: Verify Qt Android tools
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          python -c "import PySide6; print('PySide6 version:', PySide6.__version__)"
-
-          command -v pyside6-android-deploy
-          command -v qtpip
-
-          qtpip --help
-          pyside6-android-deploy --help
-
-      - name: Download Android PySide6 wheels
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          mkdir -p "$RUNNER_TEMP/android-wheels"
-          cd "$RUNNER_TEMP/android-wheels"
-
-          qtpip download PySide6 --android --arch aarch64
-
-          echo "Downloaded Android wheels:"
-          find . -maxdepth 1 -type f -name '*.whl' -print
-
-          python - <<'PY'
-          from pathlib import Path
-          import os
-          import sys
-
-          wheels = list(Path(".").glob("*.whl"))
-
-          def matches(package):
-              prefix = package.lower() + "-"
-              return [
-                  str(path.resolve())
-                  for path in wheels
-                  if path.name.lower().startswith(prefix)
-                  and "android" in path.name.lower()
-                  and "aarch64" in path.name.lower()
-              ]
-
-          pyside = matches("pyside6")
-          shiboken = matches("shiboken6")
-
-          if not pyside or not shiboken:
-              print("ERROR: Required Android wheels were not found.")
-              print("Wheel files actually downloaded:")
-              for path in wheels:
-                  print(" -", path.name)
-              sys.exit(1)
-
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
-              env.write(f"PYSIDE_WHEEL={pyside[0]}\n")
-              env.write(f"SHIBOKEN_WHEEL={shiboken[0]}\n")
-
-          print("PySide6 Android wheel:", pyside[0])
-          print("Shiboken6 Android wheel:", shiboken[0])
-          PY
-
-      - name: Build Android APK
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          test -f "$PYSIDE_WHEEL"
-          test -f "$SHIBOKEN_WHEEL"
-
-          pyside6-android-deploy \
-            --name "HSE Management System" \
-            --wheel-pyside="$PYSIDE_WHEEL" \
-            --wheel-shiboken="$SHIBOKEN_WHEEL" \
-            --keep-deployment-files \
-            --force
-
-      - name: Collect and validate APK
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          mkdir -p "$GITHUB_WORKSPACE/apk-output"
-
-          find "$GITHUB_WORKSPACE" \
-            -type f \
-            -name '*.apk' \
-            -not -path "$GITHUB_WORKSPACE/apk-output/*" \
-            -exec cp {} "$GITHUB_WORKSPACE/apk-output/" \;
-
-          APK_COUNT="$(find "$GITHUB_WORKSPACE/apk-output" -maxdepth 1 -type f -name '*.apk' | wc -l)"
-
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo "ERROR: No APK was generated."
-            exit 1
-          fi
-
-          for apk in "$GITHUB_WORKSPACE"/apk-output/*.apk; do
-            echo "Checking APK: $apk"
-            unzip -t "$apk"
-          done
-
-          ls -lh "$GITHUB_WORKSPACE/apk-output"
-
-      - name: Upload APK artifact
-        if: success()
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: HSE-Management-System-APK
@@ -212,16 +115,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload diagnostic logs on failure
+      - name: Upload build logs if failed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: HSE-Management-System-Build-Diagnostics
+          name: HSE-Android-Build-Logs
           path: |
-            **/buildozer.log
-            **/CMakeOutput.log
-            **/CMakeError.log
-            **/android-build*
-            **/*.log
+            .buildozer/android/platform/build-*/dists/**/build.log
+            .buildozer/android/platform/build-*/**/*.log
           if-no-files-found: ignore
           retention-days: 7
