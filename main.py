@@ -1575,7 +1575,7 @@ def generate_observation_card_docx(observation_ids, path):
         p.paragraph_format.space_after = Pt(0); p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.line_spacing = 0.75
         for i, typ in enumerate(OBS_TYPES):
-            mark = "鈽�" if typ == safe(row["obs_type"]) else "鈽�"
+            mark = "閳斤拷" if typ == safe(row["obs_type"]) else "閳斤拷"
             rr = p.add_run(f"{mark} {typ}")
             rr.font.size = Pt(5.9)
             if i < len(OBS_TYPES)-1:
@@ -1603,7 +1603,7 @@ def generate_observation_card_docx(observation_ids, path):
         related = safe(row["category"])
         if safe(row["subcategory"]):
             related += " / " + safe(row["subcategory"])
-        rr = p.add_run(("鈽� " + related) if related else "鈽� Not specified")
+        rr = p.add_run(("閳斤拷 " + related) if related else "閳斤拷 Not specified")
         rr.font.size = Pt(6.7)
 
         cells = lt.add_row().cells
@@ -1644,7 +1644,7 @@ def generate_observation_card_docx(observation_ids, path):
             for j in range(3):
                 idx_cat = rix + j * per_col
                 text_cat = CATEGORIES[idx_cat] if idx_cat < n else ""
-                add_text(cells3[j], (("鈽� " if text_cat == selected_cat else "鈽� ") + text_cat) if text_cat else "", 5.0)
+                add_text(cells3[j], (("閳斤拷 " if text_cat == selected_cat else "閳斤拷 ") + text_cat) if text_cat else "", 5.0)
                 if text_cat == selected_cat:
                     for run in cells3[j].paragraphs[0].runs:
                         run.bold = True
@@ -1662,7 +1662,7 @@ def generate_observation_card_docx(observation_ids, path):
             p = cells[1].paragraphs[0]
             p.paragraph_format.space_after = Pt(0); p.paragraph_format.space_before = Pt(0); p.paragraph_format.line_spacing = 0.76
             for option in options:
-                mark = "鈽�" if option == selected_value else "鈽�"
+                mark = "閳斤拷" if option == selected_value else "閳斤拷"
                 rr = p.add_run(f"{mark} {option}   ")
                 rr.font.size = Pt(font_size)
             add_border(cells[0]); add_border(cells[1])
@@ -2062,7 +2062,7 @@ class MainWindow(QMainWindow):
             desc.setWordWrap(True)
             desc.setMinimumHeight(44)
             desc.setStyleSheet("color: #526273; font-weight: normal;")
-            open_button = QPushButton("Open Module  鈫�")
+            open_button = QPushButton("Open Module  閳拷")
             open_button.setMinimumHeight(38)
             open_button.clicked.connect(handler)
             card_layout.addWidget(desc)
@@ -2102,7 +2102,7 @@ class MainWindow(QMainWindow):
             desc.setWordWrap(True)
             desc.setMinimumHeight(48)
             desc.setStyleSheet("color: #526273; font-weight: normal;")
-            button = QPushButton("Open  鈫�")
+            button = QPushButton("Open  閳拷")
             button.setMinimumHeight(40)
             button.clicked.connect(handler)
             card_layout.addWidget(desc)
@@ -2196,7 +2196,7 @@ class MainWindow(QMainWindow):
         charts.addWidget(pie_box,1); charts.addWidget(bar_box,1); layout.addLayout(charts)
 
         # A clear, complete category register. Every category is a separate row, including zero counts.
-        cat_box=QGroupBox("HSE Observation Categories 鈥� click a row to view that category")
+        cat_box=QGroupBox("HSE Observation Categories 閳ワ拷 click a row to view that category")
         cat_layout=QVBoxLayout(cat_box)
         cat_table=QTableWidget()
         categories=sorted(set(CATEGORIES), key=lambda x: x.lower())
@@ -3189,7 +3189,7 @@ class MainWindow(QMainWindow):
         if people:
             for r in people:
                 label=safe(r["name"])
-                if safe(r["designation"]): label += f" 鈥� {safe(r['designation'])}"
+                if safe(r["designation"]): label += f" 閳ワ拷 {safe(r['designation'])}"
                 combo.addItem(label, r["id"])
         else:
             combo.addItem("No active employees configured", None)
@@ -3315,9 +3315,9 @@ class MainWindow(QMainWindow):
         a, fs = self._audit_report_data(audit_id)
         if not a:
             return
-        d=QDialog(self); d.setWindowTitle(f"Audit Register 鈥� {safe(a['number'])}"); d.resize(1180,820)
+        d=QDialog(self); d.setWindowTitle(f"Audit Register 閳ワ拷 {safe(a['number'])}"); d.resize(1180,820)
         lay=QVBoxLayout(d)
-        head=QLabel(f"AUDIT REGISTER 鈥� {safe(a['number'])}"); head.setStyleSheet("font-size:21px;font-weight:bold;color:#17365D;padding:6px;"); lay.addWidget(head)
+        head=QLabel(f"AUDIT REGISTER 閳ワ拷 {safe(a['number'])}"); head.setStyleSheet("font-size:21px;font-weight:bold;color:#17365D;padding:6px;"); lay.addWidget(head)
         info=QTableWidget(0,2); info.setHorizontalHeaderLabels(["Audit Field","Value"]); info.horizontalHeader().setStretchLastSection(True); info.setAlternatingRowColors(True)
         for k,v in [("Audit Reference",a["number"]),("Audit Type",a["audit_type"]),("Audit Title",a["title"]),("Audit Date",a["audit_date"]),("Department",a["department"]),("Location",a["location"]),("Audit Standard",a["standard"]),("Audit Scope",a["scope"]),("Audit Criteria",a["criteria"]),("Status",a["status"]),("Auditor",a["auditor"]),("Reviewer",a["reviewer"]),("Approver",a["approver"])]:
             r=info.rowCount(); info.insertRow(r); info.setItem(r,0,QTableWidgetItem(safe(k))); info.setItem(r,1,QTableWidgetItem(safe(v)))
@@ -3474,7 +3474,7 @@ class MainWindow(QMainWindow):
                 for key in ["type","standard","clause","sub","detail","ca","person","location","target","attachments","add","remove"]:
                     x[key].setEnabled(False)
                 x["status"].setEnabled(True); x["closeout"].setEnabled(True)
-            d.setWindowTitle(f"Audit View 鈥� {existing['number']} 鈥� SUBMITTED / STATUS & CLOSE-OUT ONLY")
+            d.setWindowTitle(f"Audit View 閳ワ拷 {existing['number']} 閳ワ拷 SUBMITTED / STATUS & CLOSE-OUT ONLY")
         else:
             if not existing:
                 reference.setText(next_number("HSE-AUD","audits"))
@@ -3635,7 +3635,7 @@ class MainWindow(QMainWindow):
             row=QHBoxLayout(); add=QLineEdit(); add.setPlaceholderText("Add value..."); ba=QPushButton("Add"); br=QPushButton("Remove Selected"); row.addWidget(add); row.addWidget(ba); row.addWidget(br); l.addLayout(row)
             ba.clicked.connect(lambda: (lw.addItem(add.text().strip()),add.clear()) if add.text().strip() else None); br.clicked.connect(lambda: lw.takeItem(lw.currentRow()) if lw.currentRow()>=0 else None); tabs.addTab(w,title); return lw
         types=list_editor("audit_types",AUDIT_TYPES,"Audit Types"); ftypes=list_editor("audit_finding_types",["Major Nonconformity","Minor Nonconformity","Observation","Opportunity for Improvement","Positive Finding"],"Finding Types"); statuses=list_editor("audit_finding_statuses",["Open","In Progress","Submitted for Verification","Verified","Closed","Overdue"],"Finding Statuses"); standards=list_editor("audit_standards",["ISO 9001","ISO 14001","ISO 45001","Other"],"Standards")
-        clause_tab=QWidget(); cl=QVBoxLayout(clause_tab); cl.addWidget(QLabel("Configure Standards 鈫� Clauses 鈫� Sub-Clauses using JSON. Example: {\"ISO 45001\": {\"7\": [\"7.2 Competence\"]}}")); clause_edit=QTextEdit(); clause_edit.setPlainText(json.dumps(json.loads(db.setting("audit_clause_map","")) if db.setting("audit_clause_map","") else ISO_CLAUSES,ensure_ascii=False,indent=2)); cl.addWidget(clause_edit); tabs.addTab(clause_tab,"Clauses / Sub-Clauses")
+        clause_tab=QWidget(); cl=QVBoxLayout(clause_tab); cl.addWidget(QLabel("Configure Standards 閳拷 Clauses 閳拷 Sub-Clauses using JSON. Example: {\"ISO 45001\": {\"7\": [\"7.2 Competence\"]}}")); clause_edit=QTextEdit(); clause_edit.setPlainText(json.dumps(json.loads(db.setting("audit_clause_map","")) if db.setting("audit_clause_map","") else ISO_CLAUSES,ensure_ascii=False,indent=2)); cl.addWidget(clause_edit); tabs.addTab(clause_tab,"Clauses / Sub-Clauses")
         info=QLabel("Clause and Sub-Clause selections in each finding are dependent on the selected Audit Standard. Changes here affect only the Audit module."); info.setWordWrap(True); lay.addWidget(info)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel); lay.addWidget(buttons)
         def save():
@@ -4148,7 +4148,7 @@ class MainWindow(QMainWindow):
         matrix_layout = QVBoxLayout(matrix_page)
         matrix_layout.setContentsMargins(8, 8, 8, 8)
         matrix_layout.setSpacing(8)
-        form_box = QGroupBox("Training Matrix 鈥� applicable course requirements")
+        form_box = QGroupBox("Training Matrix 閳ワ拷 applicable course requirements")
         form_layout = QGridLayout(form_box)
         form_layout.setHorizontalSpacing(8)
         form_layout.setVerticalSpacing(7)
@@ -4167,7 +4167,7 @@ class MainWindow(QMainWindow):
             trade_item.setData(Qt.CheckState.Unchecked, Qt.ItemDataRole.CheckStateRole)
             trade_model.appendRow(trade_item)
         trade_combo.lineEdit().setReadOnly(True)
-        trade_combo.lineEdit().setPlaceholderText("Select one or more trades鈥�")
+        trade_combo.lineEdit().setPlaceholderText("Select one or more trades閳ワ拷")
         trade_other_label = QLabel("Other trade")
         trade_other_input = QLineEdit()
         trade_other_input.setPlaceholderText("Enter other trade name")
@@ -4300,7 +4300,7 @@ class MainWindow(QMainWindow):
 
         register_toolbar = QHBoxLayout()
         register_search = QLineEdit()
-        register_search.setPlaceholderText("Search employee, ID, trade or department鈥�")
+        register_search.setPlaceholderText("Search employee, ID, trade or department閳ワ拷")
         register_search.setClearButtonEnabled(True)
         refresh_register_btn = QPushButton("Refresh Register")
         export_register_btn = QPushButton("Export Register to Excel")
@@ -4332,7 +4332,7 @@ class MainWindow(QMainWindow):
         master_layout.addWidget(master_info)
         master_toolbar = QHBoxLayout()
         master_search = QLineEdit()
-        master_search.setPlaceholderText("Search employee, course, trade or department鈥�")
+        master_search.setPlaceholderText("Search employee, course, trade or department閳ワ拷")
         master_search.setClearButtonEnabled(True)
         refresh_master_btn = QPushButton("Refresh Master Record")
         export_master_excel_btn = QPushButton("Export Master Record to Excel")
@@ -4387,7 +4387,7 @@ class MainWindow(QMainWindow):
                     item = trade_model.item(idx)
                     if item and item.checkState() == Qt.CheckState.Checked:
                         labels.append(item.text())
-                summary = ", ".join(labels) if labels else "Select trade(s)鈥�"
+                summary = ", ".join(labels) if labels else "Select trade(s)閳ワ拷"
             trade_combo.lineEdit().setText(summary)
             show_other = any(trade_model.item(i).text() == "Other" and trade_model.item(i).checkState() == Qt.CheckState.Checked for i in range(1, trade_model.rowCount()))
             trade_other_label.setVisible(show_other)
@@ -4701,7 +4701,7 @@ class MainWindow(QMainWindow):
                                 display += "\nExpiry: " + expiry_text
                             item.setText(display)
                             item.setToolTip(
-                                "Status: " + status + "\nTraining date: " + (training_date_text or "鈥�") +
+                                "Status: " + status + "\nTraining date: " + (training_date_text or "閳ワ拷") +
                                 "\nExpiry date: " + (expiry_text or "No expiry recorded") +
                                 "\nTraining type: " + safe(course["provider_type"]) +
                                 "\nClick to add a renewal record; previous records are retained."
@@ -4787,7 +4787,7 @@ class MainWindow(QMainWindow):
                 return
             record = latest_training(employee_db_id, course_id)
             dialog = QDialog(self)
-            dialog.setWindowTitle("Record Training 鈥� " + safe(course["course_name"]))
+            dialog.setWindowTitle("Record Training 閳ワ拷 " + safe(course["course_name"]))
             dialog.setMinimumSize(540, 460)
             dialog.resize(620, 520)
             dlg_layout = QVBoxLayout(dialog)
@@ -4812,7 +4812,7 @@ class MainWindow(QMainWindow):
             attachment = QLineEdit()
             attachment.setReadOnly(True)
             attachment.setPlaceholderText("Optional certificate file")
-            browse_attachment = QPushButton("Browse鈥�")
+            browse_attachment = QPushButton("Browse閳ワ拷")
             attachment_row = QHBoxLayout()
             attachment_row.addWidget(attachment, 1)
             attachment_row.addWidget(browse_attachment)
