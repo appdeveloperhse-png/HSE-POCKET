@@ -22,26 +22,77 @@ from PySide6.QtWidgets import (
     QGridLayout
 )
 
-from openpyxl import Workbook
-from openpyxl.drawing.image import Image as XLImage
-from openpyxl.styles import Alignment, PatternFill, Border, Side, Font
-from openpyxl.cell.cell import MergedCell
+# Excel support is optional at startup. Some Android deployment builds do not
+# bundle openpyxl; a missing optional exporter must never close the whole app.
+try:
+    from openpyxl import Workbook
+    from openpyxl.drawing.image import Image as XLImage
+    from openpyxl.styles import Alignment, PatternFill, Border, Side, Font
+    from openpyxl.cell.cell import MergedCell
+    EXCEL_EXPORT_AVAILABLE = True
+except Exception:
+    Workbook = XLImage = Alignment = PatternFill = Border = Side = Font = MergedCell = None
+    EXCEL_EXPORT_AVAILABLE = False
+
+
+def _excel_export_unavailable(parent):
+    if EXCEL_EXPORT_AVAILABLE:
+        return False
+    try:
+        QMessageBox.warning(
+            parent,
+            "Excel Export Unavailable",
+            "Excel export is not available in this Android build because the optional openpyxl package was not bundled. The HSE app can continue running; CSV export remains available."
+        )
+    except Exception:
+        logging.exception("Unable to show Excel dependency warning")
+    return True
 
 
 APP_NAME = "HSE Management System"
 APP_VERSION = "1.4.17"
 
-# Windows uses LOCALAPPDATA; Android/Linux use the application's writable home.
-APP_DIR = Path(os.environ.get("LOCALAPPDATA") or os.environ.get("HOME") or str(Path.home())) / APP_NAME
+# Choose an app-writable persistent directory. On Android, prefer Qt's
+# application-specific data location; desktop paths retain their old behavior.
+def _prepare_app_directories():
+    candidates = []
+    if sys.platform == "android":
+        try:
+            from PySide6.QtCore import QStandardPaths
+            qt_path = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+            if qt_path:
+                candidates.append(Path(qt_path) / APP_NAME)
+        except Exception:
+            pass
+    if os.environ.get("LOCALAPPDATA"):
+        candidates.append(Path(os.environ["LOCALAPPDATA"]) / APP_NAME)
+    if os.environ.get("HOME"):
+        candidates.append(Path(os.environ["HOME"]) / APP_NAME)
+    candidates.append(Path.home() / APP_NAME)
+    for base in candidates:
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+            # Verify this is actually writable before choosing it.
+            probe = base / ".write_test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return base
+        except Exception:
+            continue
+    # Final fallback for restricted environments; app can still report failure.
+    fallback = Path("/tmp") / APP_NAME
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+APP_DIR = _prepare_app_directories()
 DB_DIR = APP_DIR / "database"
 ATTACH_DIR = APP_DIR / "attachments"
 REPORT_DIR = APP_DIR / "reports"
 BACKUP_DIR = APP_DIR / "backups"
 LOG_DIR = APP_DIR / "logs"
-
-for p in [APP_DIR, DB_DIR, ATTACH_DIR, REPORT_DIR, BACKUP_DIR, LOG_DIR]:
-    p.mkdir(parents=True, exist_ok=True)
-
+for _directory in [DB_DIR, ATTACH_DIR, REPORT_DIR, BACKUP_DIR, LOG_DIR]:
+    _directory.mkdir(parents=True, exist_ok=True)
 DB_FILE = DB_DIR / "hse.db"
 
 logging.basicConfig(
@@ -3715,6 +3766,8 @@ class MainWindow(QMainWindow):
             logging.exception("Audit Word export failed"); QMessageBox.critical(self,"Export Error",str(e))
 
     def _audit_export_excel(self,audit_id):
+        if _excel_export_unavailable(self):
+            return
         a,fs=self._audit_report_data(audit_id)
         if not a:return
         path=self._export_path(f"{a['number']}_Audit_Report.xlsx","Save Audit Excel Report","Excel Files (*.xlsx)")
@@ -4916,6 +4969,8 @@ class MainWindow(QMainWindow):
             ws.sheet_view.showGridLines = False
 
         def export_training_register():
+            if _excel_export_unavailable(self):
+                return
             path, _ = QFileDialog.getSaveFileName(self, "Export Training Register", "Training_Register.xlsx", "Excel Workbook (*.xlsx)")
             if not path:
                 return
@@ -4978,6 +5033,8 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Training Register", f"Could not export Excel file:\n{exc}")
 
         def export_training_matrix():
+            if _excel_export_unavailable(self):
+                return
             path, _ = QFileDialog.getSaveFileName(self, "Export Training Matrix", "Training_Matrix.xlsx", "Excel Workbook (*.xlsx)")
             if not path:
                 return
@@ -5008,6 +5065,8 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Training Matrix", f"Could not export Excel file:\n{exc}")
 
         def export_master_excel():
+            if _excel_export_unavailable(self):
+                return
             path, _ = QFileDialog.getSaveFileName(self, "Export Master Training Record", "Master_Training_Record.xlsx", "Excel Workbook (*.xlsx)")
             if not path:
                 return
@@ -5251,6 +5310,8 @@ class MainWindow(QMainWindow):
             logging.exception("CSV export failed"); QMessageBox.critical(self,"Export Error",str(e))
 
     def export_excel(self, table_name, record_ids=None):
+        if _excel_export_unavailable(self):
+            return
         try:
             columns, data = self.table_data(table_name, record_ids)
             if not columns:
@@ -6057,24 +6118,31 @@ class MainWindow(QMainWindow):
 # ============================================================
 
 def main():
-
     app = QApplication(sys.argv)
-
-    app.setApplicationName(
-        APP_NAME
-    )
-
-    app.setOrganizationName(
-        "HSE"
-    )
-
-    window = MainWindow()
-
-    window.show()
-
-    sys.exit(
-        app.exec()
-    )
+    app.setApplicationName(APP_NAME)
+    app.setOrganizationName("HSE")
+    try:
+        window = MainWindow()
+        window.show()
+        sys.exit(app.exec())
+    except SystemExit:
+        raise
+    except BaseException:
+        import traceback
+        error_text = traceback.format_exc()
+        try:
+            error_file = APP_DIR / "startup_error.txt"
+            error_file.write_text(error_text, encoding="utf-8")
+        except Exception:
+            try:
+                Path("/tmp/HSE_Management_System_startup_error.txt").write_text(error_text, encoding="utf-8")
+            except Exception:
+                pass
+        try:
+            QMessageBox.critical(None, "HSE Startup Error", "The app could not start. Diagnostic details were saved to startup_error.txt.")
+        except Exception:
+            pass
+        raise
 
 
 if __name__ == "__main__":
