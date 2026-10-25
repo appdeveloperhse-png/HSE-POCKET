@@ -22,23 +22,10 @@ from PySide6.QtWidgets import (
     QGridLayout
 )
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
-)
-from reportlab.lib.styles import getSampleStyleSheet
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, PatternFill, Border, Side, Font
 from openpyxl.cell.cell import MergedCell
-from docx import Document
-from docx.shared import Inches, Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.section import WD_ORIENT
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
 
 
 APP_NAME = "HSE Management System"
@@ -2008,11 +1995,11 @@ class MainWindow(QMainWindow):
         grid.setSpacing(10)
         modules = [
             ("HSE Dashboard", "KPIs, observation summaries and current HSE overview", self.dashboard),
-            ("HSE Observations", "Create, review, filter and export safety observations", self.observations_hub),
+            ("HSE Observations", "Create, review, filter and export safety observations to CSV or Excel", self.observations_hub),
             ("Incident / Accident", "Incident register and investigation records", self.incidents),
             ("Audits", "Audit register and audit records", self.audits),
             ("CAPA Register", "Corrective and preventive actions", self.capa),
-            ("Reports & Export", "Export available registers to Excel, Word, PDF or CSV", self.reports),
+            ("Reports & Export", "Export available registers to Excel or CSV", self.reports),
             ("Master Data", "Manage supporting company and project information", self.master_data),
             ("Training", "Training records and training register", self.training),
             ("Settings", "Application settings and existing maintenance tools", self.settings_page),
@@ -2054,8 +2041,8 @@ class MainWindow(QMainWindow):
         choices = [
             ("HSE Dashboard & Trends", "View existing HSE KPIs, category distribution and register summaries", self.dashboard),
             ("New Observation Record", "Open the existing observation entry form", self.open_new_observation),
-            ("Observation Register", "Search, filter, review, manage attachments and export observations", self.observations),
-            ("Reports & Export", "Generate available CSV, Excel, PDF and Word reports", self.reports),
+            ("Observation Register", "Search, filter, review, manage attachments and export observations to CSV or Excel", self.observations),
+            ("Reports & Export", "Generate available CSV and Excel reports", self.reports),
         ]
         for index, (title, description, handler) in enumerate(choices):
             card = QGroupBox(title)
@@ -2226,10 +2213,7 @@ class MainWindow(QMainWindow):
         delete_button = QPushButton("Delete Selected")
         export_button = QPushButton("Export CSV")
         excel_button = QPushButton("Export Excel")
-        pdf_button = QPushButton("Export PDF")
-        word_button = QPushButton("Export Word")
-        card_button = QPushButton("Draft STOP Card(s)")
-        for b in [add_button, attachment_button, delete_button, export_button, excel_button, pdf_button, word_button, card_button]:
+        for b in [add_button, attachment_button, delete_button, export_button, excel_button]:
             toolbar.addWidget(b)
         layout.addLayout(toolbar)
 
@@ -2308,34 +2292,6 @@ class MainWindow(QMainWindow):
             ids = selected_observation_ids(require_one=True)
             return ids[0] if ids else None
 
-        def draft_selected_card():
-            obs_ids = selected_observation_ids()
-            if not obs_ids:
-                return
-            records = []
-            for obs_id in obs_ids:
-                record = db.fetchone("SELECT number FROM observations WHERE id=?", (obs_id,))
-                if record:
-                    records.append(record)
-            if not records:
-                QMessageBox.warning(self, "Observation", "The selected observation(s) could not be found.")
-                return
-            if len(records) == 1:
-                default_name = f"{safe(records[0]['number'])}_Observation_STOP_Card.docx"
-            else:
-                default_name = "Selected_Observations_STOP_Cards.docx"
-            path, _ = QFileDialog.getSaveFileName(
-                self, "Draft Observation STOP Card(s)", default_name, "Word Documents (*.docx)"
-            )
-            if not path:
-                return
-            try:
-                generate_observation_card_docx(obs_ids, path)
-                self.show_export_success(path)
-            except Exception as e:
-                logging.exception("Observation card report failed")
-                QMessageBox.critical(self, "Report Error", str(e))
-
         def manage_attachments():
             obs_id = selected_observation_id()
             if obs_id is None:
@@ -2404,9 +2360,6 @@ class MainWindow(QMainWindow):
         delete_button.clicked.connect(delete_selected)
         export_button.clicked.connect(lambda: self.export_csv("observations"))
         excel_button.clicked.connect(lambda: self.export_excel("observations"))
-        pdf_button.clicked.connect(lambda: self.export_pdf("observations"))
-        word_button.clicked.connect(lambda: self.export_docx("observations"))
-        card_button.clicked.connect(draft_selected_card)
         load()
         if getattr(self, "open_new_observation_on_load", False):
             self.open_new_observation_on_load = False
@@ -2539,13 +2492,13 @@ class MainWindow(QMainWindow):
             logo.setPixmap(QPixmap(logo_path).scaled(70,55,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
         banner.addWidget(logo); banner.addWidget(QLabel(f"<b>{safe(company_name())}</b><br>Accident / Incident Investigation Register"),1); layout.addLayout(banner)
         toolbar=QHBoxLayout()
-        buttons=[("+ New Incident", None),("Edit Selected",None),("Delete Selected",None),("Export CSV",lambda:self.export_csv("incidents")),( "Export Excel",lambda:self.export_excel("incidents")),( "Export PDF",lambda:self.export_pdf("incidents")),( "Export Word",lambda:self.export_docx("incidents")),( "Professional Report",None)]
+        buttons=[("+ New Incident", None),("Edit Selected",None),("Delete Selected",None),("Export CSV",lambda:self.export_csv("incidents")),( "Export Excel",lambda:self.export_excel("incidents"))]
         btns={}
         for text,fn in buttons:
             b=QPushButton(text); toolbar.addWidget(b); btns[text]=b
             if fn:b.clicked.connect(fn)
         layout.addLayout(toolbar)
-        table=QTableWidget(); headers=["ID","Number","Date","Type","Location","Project","Method","Status","Completion","Attachments","Professional Report"]
+        table=QTableWidget(); headers=["ID","Number","Date","Type","Location","Project","Method","Status","Completion","Attachments"]
         table.setColumnCount(len(headers)); table.setHorizontalHeaderLabels(headers); table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents); table.horizontalHeader().setStretchLastSection(True); table.setSelectionBehavior(QAbstractItemView.SelectRows); layout.addWidget(table)
         def load():
             rows=db.fetchall("SELECT * FROM incidents ORDER BY id DESC"); table.setRowCount(len(rows))
@@ -2560,24 +2513,8 @@ class MainWindow(QMainWindow):
                     report_details=json.loads(safe(row["investigation_details"]) or "{}")
                 except Exception:
                     report_details={}
-                vals=[row["id"],row["number"],row["incident_date"],row["incident_type"],row["location"],row["project"],row["investigation_method"],row["status"],f"{pct}%",attached_names,"Available" if report_details.get("professional_report_generated") else "Not Generated"]
+                vals=[row["id"],row["number"],row["incident_date"],row["incident_type"],row["location"],row["project"],row["investigation_method"],row["status"],f"{pct}%",attached_names]
                 for c,v in enumerate(vals):table.setItem(r,c,QTableWidgetItem(safe(v)))
-        def professional():
-            incident_id=self.selected_id(table,"Professional Report")
-            if incident_id is None:return
-            number=table.item(table.currentRow(),1).text(); path,_=QFileDialog.getSaveFileName(self,"Save Investigation Report",f"{number}_Investigation_Report.docx","Word Document (*.docx)")
-            if not path:return
-            try:
-                generate_incident_docx(incident_id,path)
-                if not Path(path).exists() or Path(path).stat().st_size < 1000:
-                    raise ValueError("The Investigation Professional Report was not created correctly.")
-                rr=db.fetchone("SELECT investigation_details FROM incidents WHERE id=?",(incident_id,))
-                try: details=json.loads(safe(rr["investigation_details"]) or "{}") if rr else {}
-                except Exception: details={}
-                details["professional_report_generated"]=True; details["professional_report_path"]=str(path)
-                db.execute("UPDATE incidents SET investigation_details=? WHERE id=?",(json.dumps(details,ensure_ascii=False),incident_id))
-                self.show_export_success(path); load()
-            except Exception as e: logging.exception("Incident Word report failed"); QMessageBox.critical(self,"Report Error",str(e))
         btns["+ New Incident"].clicked.connect(lambda:self.incident_form(load))
         def edit_selected():
             rid=self.selected_id(table,"Edit Incident")
@@ -2587,7 +2524,6 @@ class MainWindow(QMainWindow):
             self.incident_form(load,rid)
         btns["Edit Selected"].clicked.connect(edit_selected)
         btns["Delete Selected"].clicked.connect(lambda:self.delete_selected_record(table,"incidents","incident_attachments","Incident",load))
-        btns["Professional Report"].clicked.connect(professional)
         load()
 
 
@@ -3342,9 +3278,9 @@ class MainWindow(QMainWindow):
                 r=ft.rowCount(); ft.insertRow(r); vals=[f["finding_number"],f["finding_standard"] if "finding_standard" in f.keys() else a["standard"],f["clause"],f["sub_clause"],f["finding_type"],f["finding_detail"] or f["observation"],f["responsible"],f["location"] if "location" in f.keys() else "",("OVERDUE" if overdue(f["target_date"],f["status"]) else f["status"]) + (f" / {f['target_date']}" if f["target_date"] else "")]
                 for c,v in enumerate(vals): ft.setItem(r,c,QTableWidgetItem(safe(v)))
             ft.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); lay.addWidget(ft,2)
-        buttons=QHBoxLayout(); word=QPushButton("Generate Word"); excel=QPushButton("Generate Excel"); close=QPushButton("Close")
-        buttons.addWidget(word); buttons.addWidget(excel); buttons.addStretch(); buttons.addWidget(close); lay.addLayout(buttons)
-        word.clicked.connect(lambda:self._audit_export_word(audit_id)); excel.clicked.connect(lambda:self._audit_export_excel(audit_id)); close.clicked.connect(d.accept)
+        buttons=QHBoxLayout(); excel=QPushButton("Generate Excel"); close=QPushButton("Close")
+        buttons.addWidget(excel); buttons.addStretch(); buttons.addWidget(close); lay.addLayout(buttons)
+        excel.clicked.connect(lambda:self._audit_export_excel(audit_id)); close.clicked.connect(d.accept)
         d.exec()
 
     def audit_type_selector(self, refresh):
@@ -4021,7 +3957,7 @@ class MainWindow(QMainWindow):
     def capa(self):
         w,layout=self.page("CAPA Register")
         toolbar=QHBoxLayout(); btns={}
-        for text in ["+ New CAPA","Delete Selected","Export CSV","Export Excel","Export PDF","Export Word"]:
+        for text in ["+ New CAPA","Delete Selected","Export CSV","Export Excel"]:
             b=QPushButton(text); toolbar.addWidget(b); btns[text]=b
         layout.addLayout(toolbar)
         table=QTableWidget(); headers=["ID","Number","Source","Reference","Priority","Responsible","Target Date","Status","Overdue","Attachments"]; table.setColumnCount(len(headers)); table.setHorizontalHeaderLabels(headers); table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents); table.horizontalHeader().setStretchLastSection(True); table.setSelectionBehavior(QAbstractItemView.SelectRows); layout.addWidget(table)
@@ -4030,7 +3966,7 @@ class MainWindow(QMainWindow):
             for r,row in enumerate(rows):
                 count=db.fetchone("SELECT COUNT(*) c FROM capa_attachments WHERE capa_id=?",(row["id"],))["c"]; vals=[row["id"],row["number"],row["source"],row["reference_number"],row["priority"],row["responsible"],row["target_date"],row["status"],"OVERDUE" if overdue(row["target_date"],row["status"]) else "",count]
                 for c,v in enumerate(vals):table.setItem(r,c,QTableWidgetItem(safe(v)))
-        btns["+ New CAPA"].clicked.connect(lambda:self.capa_form(load)); btns["Delete Selected"].clicked.connect(lambda:self.delete_selected_record(table,"capa","capa_attachments","CAPA",load)); btns["Export CSV"].clicked.connect(lambda:self.export_csv("capa")); btns["Export Excel"].clicked.connect(lambda:self.export_excel("capa")); btns["Export PDF"].clicked.connect(lambda:self.export_pdf("capa")); btns["Export Word"].clicked.connect(lambda:self.export_docx("capa")); load()
+        btns["+ New CAPA"].clicked.connect(lambda:self.capa_form(load)); btns["Delete Selected"].clicked.connect(lambda:self.delete_selected_record(table,"capa","capa_attachments","CAPA",load)); btns["Export CSV"].clicked.connect(lambda:self.export_csv("capa")); btns["Export Excel"].clicked.connect(lambda:self.export_excel("capa")); load()
 
 
     def capa_form(self, refresh):
@@ -4347,13 +4283,11 @@ class MainWindow(QMainWindow):
         master_search.setClearButtonEnabled(True)
         refresh_master_btn = QPushButton("Refresh Master Record")
         export_master_excel_btn = QPushButton("Export Master Record to Excel")
-        export_master_word_btn = QPushButton("Export Master Record to Word")
-        for btn in (refresh_master_btn, export_master_excel_btn, export_master_word_btn):
+        for btn in (refresh_master_btn, export_master_excel_btn):
             btn.setMinimumHeight(34)
         master_toolbar.addWidget(master_search, 1)
         master_toolbar.addWidget(refresh_master_btn)
         master_toolbar.addWidget(export_master_excel_btn)
-        master_toolbar.addWidget(export_master_word_btn)
         master_layout.addLayout(master_toolbar)
         master_table = QTableWidget()
         master_table.setColumnCount(14)
@@ -5166,7 +5100,6 @@ class MainWindow(QMainWindow):
         register_table.cellClicked.connect(edit_training_cell)
         refresh_master_btn.clicked.connect(load_master_record)
         export_master_excel_btn.clicked.connect(export_master_excel)
-        export_master_word_btn.clicked.connect(export_master_word)
         master_search.textChanged.connect(apply_master_filter)
 
         load_courses()
@@ -5205,9 +5138,7 @@ class MainWindow(QMainWindow):
             row = QHBoxLayout(box)
             for label, handler in [
                 ("Download CSV", lambda t=table_name: self.export_csv(t)),
-                ("Download Excel", lambda t=table_name: self.export_excel(t)),
-                ("Download PDF", lambda t=table_name: self.export_pdf(t)),
-                ("Download Word", lambda t=table_name: self.export_docx(t))
+                ("Download Excel", lambda t=table_name: self.export_excel(t))
             ]:
                 b = QPushButton(label)
                 b.setMinimumHeight(38)
@@ -5215,39 +5146,6 @@ class MainWindow(QMainWindow):
                 b.clicked.connect(handler)
             layout.addWidget(box)
 
-        incident_box = QGroupBox("Professional Incident Investigation Word Report")
-        ir = QHBoxLayout(incident_box)
-        incident_combo = QComboBox()
-        incidents = db.fetchall("SELECT id,number FROM incidents ORDER BY id DESC")
-        for row in incidents:
-            incident_combo.addItem(safe(row["number"]), row["id"])
-        ir.addWidget(QLabel("Investigation:"))
-        ir.addWidget(incident_combo, 1)
-        b = QPushButton("Download Investigation Report")
-        b.setMinimumHeight(38)
-        ir.addWidget(b)
-
-        def generate():
-            if incident_combo.count() == 0:
-                QMessageBox.information(self, "No Incidents", "No incident investigations are available.")
-                return
-            incident_id = incident_combo.currentData()
-            number = incident_combo.currentText()
-            default_path = str(REPORT_DIR / f"{number}_Investigation_Report.docx")
-            path, _ = QFileDialog.getSaveFileName(
-                self, "Save Investigation Report", default_path, "Word Document (*.docx)"
-            )
-            if not path:
-                return
-            try:
-                generate_incident_docx(int(incident_id), path)
-                self.show_export_success(path)
-            except Exception as e:
-                logging.exception("Incident report failed")
-                QMessageBox.critical(self, "Report Error", str(e))
-
-        b.clicked.connect(generate)
-        layout.addWidget(incident_box)
         layout.addStretch(1)
 
     def show_export_success(self, path):
