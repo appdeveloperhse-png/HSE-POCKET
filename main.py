@@ -1,4 +1,4 @@
-"""Safety Observation Card - Kivy form and PDF generator.
+ """Safety Observation Card - Kivy form and PDF generator.
 
 This application intentionally contains only the Safety Observation Card workflow.
 PDF layout follows the supplied reference image. Existing HSE modules are not included.
@@ -301,6 +301,119 @@ def generate_observation_pdf(data, output_path):
     Path(output_path).write_bytes(output)
     return output_path
 
+
+def copy_pdf_to_downloads(source_path, filename):
+    """Copy a generated PDF to the user's public Downloads folder.
+
+    Android 10+ uses MediaStore so the PDF is visible in Downloads without asking
+    for broad storage permission. Desktop platforms use ~/Downloads.
+    Returns (display_location, content_uri_or_none).
+    """
+    source_path = Path(source_path)
+
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        BuildVersion = autoclass("android.os.Build$VERSION")
+        if int(BuildVersion.SDK_INT) >= 29:
+            MediaStoreDownloads = autoclass("android.provider.MediaStore$Downloads")
+            MediaColumns = autoclass("android.provider.MediaStore$MediaColumns")
+            ContentValues = autoclass("android.content.ContentValues")
+            activity = PythonActivity.mActivity
+            resolver = activity.getContentResolver()
+            values = ContentValues()
+            values.put(MediaColumns.DISPLAY_NAME, filename)
+            values.put(MediaColumns.MIME_TYPE, "application/pdf")
+            values.put(MediaColumns.RELATIVE_PATH, "Download/SafetyObservationCards")
+            values.put(MediaColumns.IS_PENDING, 1)
+            collection = MediaStoreDownloads.EXTERNAL_CONTENT_URI
+            uri = resolver.insert(collection, values)
+            if uri is None:
+                raise RuntimeError("Android could not create a file in Downloads.")
+            stream = resolver.openOutputStream(uri)
+            if stream is None:
+                raise RuntimeError("Android could not open the new Downloads file.")
+            try:
+                stream.write(bytearray(source_path.read_bytes()))
+                stream.flush()
+            finally:
+                stream.close()
+            done = ContentValues()
+            done.put(MediaColumns.IS_PENDING, 0)
+            resolver.update(uri, done, None, None)
+            return ("Downloads/SafetyObservationCards/" + filename, uri.toString())
+    except ImportError:
+        # Not running on Android (or Android bridge is not packaged).
+        pass
+
+    # Desktop fallback; this is also useful for local development/testing.
+    downloads = Path.home() / "Downloads"
+    downloads.mkdir(parents=True, exist_ok=True)
+    destination = downloads / filename
+    destination.write_bytes(source_path.read_bytes())
+    return (str(destination), None)
+
+
+def open_generated_pdf(path, content_uri=None):
+    """Open the PDF with the Android PDF viewer or the desktop default app."""
+    if content_uri:
+        from jnius import autoclass
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        Intent = autoclass("android.content.Intent")
+        Uri = autoclass("android.net.Uri")
+        intent = Intent(Intent.ACTION_VIEW)
+        intent.setDataAndType(Uri.parse(content_uri), "application/pdf")
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        PythonActivity.mActivity.startActivity(intent)
+        return
+
+    import subprocess
+    import sys
+    if sys.platform.startswith("win"):
+        os.startfile(path)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
+
+
+def show_pdf_ready(filename, location, path, content_uri=None):
+    """Show a useful post-generation dialog with actions for the actual PDF."""
+    body = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
+    message = Label(
+        text=("Your Safety Observation Card is ready.\n\n"
+              f"{filename}\n\nSaved to: {location}"),
+        halign="center", valign="middle", color=(1, 1, 1, 1),
+    )
+    message.bind(size=lambda inst, size: setattr(inst, "text_size", size))
+    body.add_widget(message)
+    dialog = Popup(title="PDF ready - saved to Downloads", content=body,
+                   size_hint=(0.90, 0.48), auto_dismiss=False)
+
+    actions = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+    open_button = Button(
+        text="OPEN PDF", background_normal="", background_down="",
+        background_color=(0.05, 0.42, 0.68, 1), color=(1, 1, 1, 1), bold=True,
+    )
+    open_button.bind(on_release=lambda *_: _open_and_dismiss(dialog, path, content_uri))
+    done_button = Button(
+        text="DONE", background_normal="", background_down="",
+        background_color=(0.16, 0.48, 0.30, 1), color=(1, 1, 1, 1), bold=True,
+    )
+    done_button.bind(on_release=dialog.dismiss)
+    actions.add_widget(open_button)
+    actions.add_widget(done_button)
+    body.add_widget(actions)
+    dialog.open()
+
+
+def _open_and_dismiss(dialog, path, content_uri):
+    try:
+        open_generated_pdf(path, content_uri)
+        dialog.dismiss()
+    except Exception as exc:
+        show_popup("Unable to open PDF", str(exc) + "\nThe PDF is still saved in Downloads.")
+
 class SafetyObservationApp(App):
     title = APP_TITLE
 
@@ -494,19 +607,20 @@ class SafetyObservationApp(App):
             return
 
         try:
-            output_dir = Path(self.user_data_dir) / "SafetyObservationReports"
-            output_dir.mkdir(parents=True, exist_ok=True)
+            # Generate in a temporary app-private location, then publish a copy
+            # into the user's public Downloads folder (not an inaccessible app folder).
+            work_dir = Path(self.user_data_dir) / "pdf_work"
+            work_dir.mkdir(parents=True, exist_ok=True)
             filename = f"Safety_Observation_{datetime.now():%Y%m%d_%H%M%S}.pdf"
-            output_path = str(output_dir / filename)
-            generate_observation_pdf(data, output_path)
-            show_popup(
-                "PDF Generated",
-                "Your completed Safety Observation Card PDF has been generated.\n\n"
-                f"File: {filename}\n\nSaved in app storage:\n{output_path}\n\n"
-                "Use your device's file manager to open or share the PDF.",
-            )
+            temporary_pdf = work_dir / filename
+            generate_observation_pdf(data, str(temporary_pdf))
+            location, content_uri = copy_pdf_to_downloads(temporary_pdf, filename)
+            show_pdf_ready(filename, location, str(temporary_pdf), content_uri)
         except Exception as exc:
-            show_popup("PDF generation failed", str(exc))
+            show_popup(
+                "PDF generation / saving failed",
+                str(exc) + "\n\nPlease check that the app has access to Downloads, then try again.",
+            )
 
 
 if __name__ == "__main__":
